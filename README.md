@@ -21,38 +21,22 @@
 
 ---
 
-## 시작하기
+## 내려받기
 
-### 필요한 것
+[**Releases**](../../releases) 에서 `ImageMacro.exe` 를 받아 실행하면 끝입니다.
 
-- Windows 10 이상
-- [.NET 9 데스크톱 런타임](https://dotnet.microsoft.com/download/dotnet/9.0)
-- (선택) 블루스택 등 안드로이드 에뮬레이터 — ADB 클릭을 쓸 때만
+- **.NET 설치가 필요 없습니다.** 런타임이 exe 안에 들어 있습니다 (약 84MB).
+- 첫 실행은 압축을 푸느라 10~20초 걸릴 수 있습니다. 두 번째부터는 빠릅니다.
+- 윈도우 SmartScreen 경고가 뜨면 `추가 정보` → `실행` 을 누르세요.
+  코드 서명 인증서가 없어서 뜨는 경고입니다.
+- 설치 과정이 없습니다. 지우고 싶으면 exe만 삭제하면 됩니다.
 
-### 빌드
+> Windows 10 이상 64비트에서 동작합니다.
+> ADB 클릭을 쓰려면 블루스택 등 안드로이드 에뮬레이터가 따로 필요합니다.
 
-```bash
-git clone https://github.com/sample1285/ImageMacro.git
-cd ImageMacro
-dotnet build -c Release
-```
+---
 
-바로 실행하려면:
-
-```bash
-dotnet run
-```
-
-배포용 단일 exe 만들기:
-
-```bash
-dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true
-```
-
-`bin/Release/net9.0-windows/win-x64/publish/` 에 exe가 생깁니다.
-(같은 폴더의 `OpenCvSharpExtern.dll` 이 함께 있어야 동작합니다.)
-
-### 첫 매크로 만들기
+## 처음 써보기
 
 1. **+ 새 매크로** 로 매크로를 하나 만듭니다
 2. **+ 추가** 로 스텝을 넣고, 종류를 고릅니다
@@ -62,6 +46,33 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 
 > 이미지는 **화면에 보이는 그대로의 크기**로 잘라야 합니다. 확대·축소한 이미지는 찾지 못합니다.
 > 잘 못 찾으면 **일치도 기준**을 조금 낮춰보세요 (기본 80%).
+
+---
+
+## 직접 빌드하기
+
+[.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) 가 필요합니다.
+
+```bash
+git clone https://github.com/sample1285/ImageMacro.git
+cd ImageMacro
+dotnet run
+```
+
+배포용 단일 exe 만들기 (.NET 런타임 포함 — 받는 사람은 아무것도 설치할 필요 없음):
+
+```bash
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o dist
+```
+
+`dist/ImageMacro.exe` 하나만 있으면 어디서든 실행됩니다.
+
+`v` 로 시작하는 태그를 올리면 깃헙 Actions 가 알아서 빌드해서 Releases 에 올려줍니다:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
 
 ---
 

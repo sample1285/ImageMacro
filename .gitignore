@@ -21,3 +21,7 @@ obj/
 # ── 이미지 템플릿 (본인 화면 캡처라 공유하지 않음) ──────────
 images/
 templates/
+
+# 배포용 exe (깃에 넣지 않고 Releases 로 올린다 — 84MB)
+dist/
+publish/
