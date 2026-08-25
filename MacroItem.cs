@@ -27,11 +27,13 @@ namespace ImageMacro
     }
 
     // 스텝 켜고 끄기에서 무엇을 할지
+    // (저장 파일에 숫자로 들어가므로 순서를 바꾸거나 중간에 끼워넣으면 안 된다)
     public enum ToggleAction
     {
-        Off,     // 끄기
-        On,      // 켜기
-        Flip     // 반대로 (켜져 있으면 끄고, 꺼져 있으면 켜기)
+        Off,        // 끄기
+        On,         // 켜기
+        Flip,       // 반대로 (켜져 있으면 끄고, 꺼져 있으면 켜기)
+        OnlyThese   // 적은 것만 켜고 나머지는 모두 끄기 (스위치 스텝은 건드리지 않는다)
     }
 
     public enum TimeoutAction
@@ -69,6 +71,10 @@ namespace ImageMacro
         public int      WaitAfter        { get; set; } = 500;
         public int      Confidence       { get; set; } = 80;
         public bool     Enabled          { get; set; } = true;
+
+        // 실행을 시작할 때 이 스텝을 꺼진 상태로 둔다.
+        // '스텝 켜고 끄기' 가 켜주기 전까지는 건너뛴다. 저장된 값은 바뀌지 않는다.
+        public bool     StartDisabled    { get; set; } = false;
         public int      Timeout          { get; set; } = 0;
         public int      ClickOffsetX     { get; set; } = 0;
         public int      ClickOffsetY     { get; set; } = 0;
@@ -169,7 +175,8 @@ namespace ImageMacro
             GroupId         = s.GroupId,        RightClick      = s.RightClick,
             ClickCount      = s.ClickCount,     ClickDelay      = s.ClickDelay,
             WaitAfter       = s.WaitAfter,      Confidence      = s.Confidence,
-            Enabled         = s.Enabled,        Timeout         = s.Timeout,
+            Enabled         = s.Enabled,        StartDisabled   = s.StartDisabled,
+            Timeout         = s.Timeout,
             ClickOffsetX    = s.ClickOffsetX,   ClickOffsetY    = s.ClickOffsetY,
             UseCustomOffset = s.UseCustomOffset, KeyText        = s.KeyText,
             HotKey          = s.HotKey,         MoveX           = s.MoveX,

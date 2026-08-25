@@ -61,7 +61,7 @@ namespace ImageMacro
         RadioButton rdTOStop=new(),rdTORestart=new(); NumericUpDown nudRestartDelay=new(); Label lblRestartDelay=new();
         Panel    pnlRightScroll=new(),pnlRightInner=new();
         ComboBox cmbStepType=new();
-        CheckBox chkEnabled=new(); NumericUpDown nudWaitAfter=new(); NumericUpDown nudJump=new(); TextBox txtWatchTargets=new();
+        CheckBox chkEnabled=new(),chkStartOff=new(); NumericUpDown nudWaitAfter=new(); NumericUpDown nudJump=new(); TextBox txtWatchTargets=new();
         // image panel
         Panel    pnlImage=new(); PictureBox picPreview=new();
         Button   btnPickImg=new(),btnTestImg=new();
@@ -268,6 +268,9 @@ namespace ImageMacro
             pnlRightInner.Controls.Add(MkL("실행 후 대기(ms):",rx,ry+2));
             nudWaitAfter.Location=new System.Drawing.Point(ix,ry); nudWaitAfter.Size=new System.Drawing.Size(90,23); nudWaitAfter.Minimum=0; nudWaitAfter.Maximum=30000; nudWaitAfter.Value=500; nudWaitAfter.ValueChanged+=(s,e)=>{if(_selStep!=null)_selStep.WaitAfter=(int)nudWaitAfter.Value;}; pnlRightInner.Controls.Add(nudWaitAfter);
             chkEnabled.Text="이 스텝 사용"; chkEnabled.Location=new System.Drawing.Point(ix+112,ry+3); chkEnabled.AutoSize=true; chkEnabled.Checked=true; chkEnabled.CheckedChanged+=OnEnabled; pnlRightInner.Controls.Add(chkEnabled);
+            chkStartOff.Text="시작할 때 꺼둠"; chkStartOff.Location=new System.Drawing.Point(ix+220,ry+3); chkStartOff.AutoSize=true; chkStartOff.Font=new Font("맑은 고딕",9);
+            chkStartOff.CheckedChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.StartDisabled=chkStartOff.Checked;RefreshStepList();}};
+            pnlRightInner.Controls.Add(chkStartOff);
             ry+=32;
 
             pnlRightInner.Controls.Add(MkL("끝나면 갈 스텝:",rx,ry+4));
@@ -300,8 +303,8 @@ namespace ImageMacro
                 txtToggleTargets.TextChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.ToggleTargets=txtToggleTargets.Text;RefreshStepList();}};
                 pnlToggleRow.Controls.Add(txtToggleTargets);
                 pnlToggleRow.Controls.Add(new Label{Text="번을",Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),Location=new System.Drawing.Point(PIX+96,7),AutoSize=true,ForeColor=Color.FromArgb(110,30,150)});
-                cmbToggleAction.Location=new System.Drawing.Point(PIX+128,4); cmbToggleAction.Size=new System.Drawing.Size(120,23); cmbToggleAction.DropDownStyle=ComboBoxStyle.DropDownList; cmbToggleAction.Font=new Font("맑은 고딕",8.5f);
-                cmbToggleAction.Items.AddRange(new object[]{"끄기","켜기","반대로"});
+                cmbToggleAction.Location=new System.Drawing.Point(PIX+128,4); cmbToggleAction.Size=new System.Drawing.Size(160,23); cmbToggleAction.DropDownStyle=ComboBoxStyle.DropDownList; cmbToggleAction.Font=new Font("맑은 고딕",8.5f);
+                cmbToggleAction.Items.AddRange(new object[]{"끄기","켜기","반대로","만 켜기 (나머지 끄기)"});
                 cmbToggleAction.SelectedIndex=0;
                 cmbToggleAction.SelectedIndexChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.ToggleAction=(ToggleAction)cmbToggleAction.SelectedIndex;RefreshStepList();}};
                 pnlToggleRow.Controls.Add(cmbToggleAction);
@@ -490,6 +493,7 @@ namespace ImageMacro
             }
             // 비활성 표시
             if(!step.Enabled)card.Controls.Add(new Label{Text="OFF",Location=new System.Drawing.Point(cardW-32,4),AutoSize=true,Font=new Font("맑은 고딕",7,FontStyle.Bold),ForeColor=Color.FromArgb(180,180,180),BackColor=Color.Transparent});
+            else if(step.StartDisabled)card.Controls.Add(new Label{Text="꺼진 채 시작",Location=new System.Drawing.Point(cardW-66,4),AutoSize=true,Font=new Font("맑은 고딕",7,FontStyle.Bold),ForeColor=Color.FromArgb(150,60,190),BackColor=Color.Transparent});
             // 선택 테두리
             if(selected)card.Paint+=(s,e)=>{using var pen=new Pen(Color.FromArgb(0,120,215),2);e.Graphics.DrawRectangle(pen,1,1,card.Width-3,card.Height-3);};
             // 클릭 → 선택
@@ -905,7 +909,7 @@ namespace ImageMacro
             nudClicks.ValueChanged-=OnNudClicks; nudCDelay.ValueChanged-=OnNudCDelay;
             cmbStepType.SelectedIndexChanged-=OnStepTypeChanged;
             cmbStepType.SelectedIndex=st.Type switch{StepType.Sequential=>0,StepType.Simultaneous=>1,StepType.KeyInput=>2,StepType.MouseMove=>3,StepType.Delay=>4,StepType.Notification=>5,StepType.ToggleSteps=>6,_=>0};
-            SetNud(nudWaitAfter,st.WaitAfter); chkEnabled.Checked=st.Enabled;
+            SetNud(nudWaitAfter,st.WaitAfter); chkEnabled.Checked=st.Enabled; chkStartOff.Checked=st.StartDisabled;
             SetNud(nudJump,st.JumpOnSuccess);
             ShowPanelForType(st.Type);
             // 이미지
@@ -966,11 +970,17 @@ namespace ImageMacro
             _clickMode=_current.ClickMode;
             if(_clickMode==ClickMode.Adb&&!PrepareAdb(_current)){_isRunning=false;btnRun.Enabled=true;btnStop.Enabled=false;return;}
             var snap=_current.Clone();
+            int startOff=ApplyStartState(snap);
+            if(!snap.EventMode&&!snap.Steps.Exists(st=>st.Enabled)){
+                MessageBox.Show("모든 스텝이 꺼진 상태로 시작하게 되어 있어 아무것도 실행되지 않습니다.\n\n"+
+                                "'스텝 켜고 끄기' 스텝만큼은 '시작할 때 꺼둠' 을 풀어주세요.","실행 불가");
+                _isRunning=false;btnRun.Enabled=true;btnStop.Enabled=false;return;
+            }
             if(snap.EventMode)_thread=new Thread(()=>{try{EventLoop(snap);}catch(Exception ex){BeginInvoke(()=>{_isRunning=false;btnRun.Enabled=true;btnStop.Enabled=false;SetStatus($"오류: {ex.Message}");});}});
             else _thread=new Thread(()=>{try{MacroLoop(snap);}catch(Exception ex){BeginInvoke(()=>{_isRunning=false;btnRun.Enabled=true;btnStop.Enabled=false;SetStatus($"오류: {ex.Message}");});}});
             _thread.IsBackground=true; _thread.Start();
             string mode=snap.EventMode?"항상 감시":$"반복:{(snap.RepeatCount==0?"무한":snap.RepeatCount+"회")}";
-            SetStatus($"'{snap.Name}' 실행 중! {mode}");
+            SetStatus($"'{snap.Name}' 실행 중! {mode}"+(startOff>0?$"  (꺼진 채 시작: {startOff}개)":""));
         }
         void OnStopMacro(object? s,EventArgs e){_isRunning=false;btnRun.Enabled=_current?.Steps.Count>0;btnStop.Enabled=false;SetStatus("정지됨.");} // 정지됨 유지
 
@@ -1033,15 +1043,26 @@ namespace ImageMacro
             return JmpTo(step,defaultNext);
         }
 
+        // 실행을 시작할 때 '시작할 때 꺼둠' 스텝을 꺼둔다. 몇 개를 껐는지 돌려준다.
+        // 실행용 복사본에만 적용하므로 저장된 매크로는 그대로 남는다.
+        static int ApplyStartState(MacroItem m)
+        {
+            int n=0;
+            foreach(var st in m.Steps)if(st.StartDisabled&&st.Enabled){st.Enabled=false;n++;}
+            return n;
+        }
+
         void MacroLoop(MacroItem macro)
         {
             var bitmaps=LoadBitmaps(macro); int loopDone=0;
             while(_isRunning){
                 _restartRequested=false;
+                bool ranSomething=false;
                 int i=0;
                 while(i<macro.Steps.Count&&_isRunning&&!_restartRequested){
                     var step=macro.Steps[i];
                     if(!step.Enabled){i++;continue;}
+                    ranSomething=true;
                     bool ok=true;
                     if(step.Type==StepType.Sequential){ok=RunSeq(macro,step,bitmaps,i,loopDone);i=ok?NextAfterStep(macro,step,i+1,bitmaps,loopDone):i+1;}
                     else if(step.Type==StepType.Simultaneous){
@@ -1062,6 +1083,12 @@ namespace ImageMacro
                 }
                 if(!_isRunning)break;
                 if(_restartRequested)continue;
+                // 전부 꺼져 있으면 한 바퀴가 순식간에 끝나 CPU 를 태운다 → 탐색 주기만큼 쉰다
+                if(!ranSomething){
+                    SetStatus($"[{macro.Name}] 켜져 있는 스텝이 없습니다 — 스위치가 켜주기를 기다리는 중...");
+                    int rest=Math.Max(macro.ScanInterval,100);
+                    while(rest>0&&_isRunning){int ch=Math.Min(rest,100);Thread.Sleep(ch);rest-=ch;}
+                }
                 loopDone++;
                 if(macro.RepeatCount>0&&loopDone>=macro.RepeatCount){SetStatus($"[{macro.Name}] {macro.RepeatCount}회 반복 완료.");Invoke(OnStopMacro,null,EventArgs.Empty);break;}
                 WaitBeforeNextLoop(macro,loopDone);
@@ -1166,7 +1193,7 @@ namespace ImageMacro
             if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);
         }
 
-        static string ToggleActionName(ToggleAction a)=>a switch{ToggleAction.On=>"켜기",ToggleAction.Flip=>"반대로",_=>"끄기"};
+        static string ToggleActionName(ToggleAction a)=>a switch{ToggleAction.On=>"켜기",ToggleAction.Flip=>"반대로",ToggleAction.OnlyThese=>"만 켜기(나머지 끄기)",_=>"끄기"};
 
         // 지정한 이미지가 지금 화면에 보이면 대상 스텝들을 켜거나 끈다.
         // 안 보이면 아무것도 하지 않고 그냥 지나간다 (기다리지 않는다).
@@ -1183,14 +1210,25 @@ namespace ImageMacro
             if(!MatchTpl(g,tmpl,step.Confidence/100.0,capOrg).HasValue)return;
 
             var changed=new List<string>();
-            foreach(int ti in targets){
-                bool on=step.ToggleAction switch{
-                    ToggleAction.On=>true,
-                    ToggleAction.Flip=>!macro.Steps[ti].Enabled,
-                    _=>false};
-                if(macro.Steps[ti].Enabled!=on){macro.Steps[ti].Enabled=on;changed.Add($"{ti+1}");}
+            if(step.ToggleAction==ToggleAction.OnlyThese){
+                // 적은 것만 켜고 나머지는 끈다.
+                // 스위치 스텝까지 꺼버리면 다시 켤 방법이 없어지므로 건드리지 않는다.
+                var want=new HashSet<int>(targets);
+                for(int ti=0;ti<macro.Steps.Count;ti++){
+                    if(macro.Steps[ti].Type==StepType.ToggleSteps)continue;
+                    bool on=want.Contains(ti);
+                    if(macro.Steps[ti].Enabled!=on){macro.Steps[ti].Enabled=on;changed.Add($"{ti+1}{(on?"켬":"끔")}");}
+                }
+            }else{
+                foreach(int ti in targets){
+                    bool on=step.ToggleAction switch{
+                        ToggleAction.On=>true,
+                        ToggleAction.Flip=>!macro.Steps[ti].Enabled,
+                        _=>false};
+                    if(macro.Steps[ti].Enabled!=on){macro.Steps[ti].Enabled=on;changed.Add($"{ti+1}");}
+                }
             }
-            string what=step.ToggleAction==ToggleAction.On?"켬":step.ToggleAction==ToggleAction.Flip?"뒤집음":"끔";
+            string what=step.ToggleAction switch{ToggleAction.On=>"켬",ToggleAction.Flip=>"뒤집음",ToggleAction.OnlyThese=>"만 켬",_=>"끔"};
             string where=idx>=0?$"스텝{idx+1}":"[항상감시]";
             SetStatus(changed.Count>0
                 ? $"[{macro.Name}] {where}: '{Path.GetFileName(step.ImagePath)}' 보임 → 스텝 {string.Join(",",changed)} {what}"
