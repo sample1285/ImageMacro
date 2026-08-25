@@ -502,12 +502,13 @@ namespace ImageMacro
             return card;
         }
 
-        Panel MakeBranchBar(MacroStep step,int barW)
+        Panel MakeBranchBar(MacroStep step,int barW,int stepNo=0)
         {
             int barH=22;
             var bar=new Panel{Size=new System.Drawing.Size(barW,barH),BackColor=Color.FromArgb(235,245,255),BorderStyle=BorderStyle.FixedSingle};
             var targets=step.WatchTargets.Split(',',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
-            string txt="끝난 뒤 지켜봄: "+string.Join(" | ",targets.Select(t=>"스텝 "+t.Trim()))+" → 먼저 뜨는 쪽으로";
+            string who=stepNo>0?$"스텝{stepNo} ":"";
+            string txt=who+"끝난 뒤 지켜봄: "+string.Join(" | ",targets.Select(t=>"스텝 "+t.Trim()))+" → 먼저 뜨는 쪽으로";
             var lbl=new Label{Text=txt,Location=new System.Drawing.Point(6,2),AutoSize=true,Font=new Font("맑은 고딕",7.5f),ForeColor=Color.FromArgb(0,100,160),BackColor=Color.Transparent,Cursor=Cursors.Hand};
             bar.Controls.Add(lbl);
             // 전체 바 클릭 시 첫 번째 대상으로 이동
@@ -838,10 +839,13 @@ namespace ImageMacro
                             wrapper.Location=new System.Drawing.Point(4,y);
                             pnlStepFlow.Controls.Add(wrapper);
                             y+=wrapper.Height+4;
-                            // 그룹 내 마지막 스텝의 WatchTargets 분기 바
-                            var lastStep=_current.Steps[grpIndices[^1]];
-                            if(!string.IsNullOrWhiteSpace(lastStep.WatchTargets)){
-                                var branchBar=MakeBranchBar(lastStep,cardW);
+                            // 묶음 안의 어느 멤버든 '끝난 뒤 지켜볼 스텝'이 있으면 전부 보여준다.
+                            // (예전엔 마지막 멤버 것만 보여줘서, 앞쪽 멤버에 걸어둔 설정이
+                            //  화면에 안 보인 채로 흐름을 바꿔 원인을 찾기 어려웠다)
+                            foreach(int gi in grpIndices){
+                                var gstep=_current.Steps[gi];
+                                if(string.IsNullOrWhiteSpace(gstep.WatchTargets))continue;
+                                var branchBar=MakeBranchBar(gstep,cardW,gi+1);
                                 branchBar.Location=new System.Drawing.Point(4,y);
                                 pnlStepFlow.Controls.Add(branchBar);y+=branchBar.Height+2;
                             }
@@ -1012,13 +1016,18 @@ namespace ImageMacro
                 SetStatus($"[{macro.Name}] {ri}  지켜보는 중: [{watchLabel}]");
                 using var ss=CaptureScreen(out var capOrg);using Mat src=BitmapToMat(ss);using Mat g=new Mat();
                 Cv2.CvtColor(src,g,ColorConversionCodes.BGRA2GRAY);
-                foreach(int ti in targets){
-                    var st=macro.Steps[ti];
-                    if(string.IsNullOrEmpty(st.ImagePath)||!bitmaps.TryGetValue(st.ImagePath,out var tmpl))continue;
-                    var pos=MatchTpl(g,tmpl,st.Confidence/100.0,capOrg);
-                    if(pos.HasValue){
-                        SetStatus($"[{macro.Name}] {ri}  스텝{ti+1} 먼저 뜸 → 스텝{ti+1}로 이동");
-                        return ti;
+                // 여기서도 기준을 넘은 것 중 가장 비슷한 쪽으로 간다
+                using(Mat sgb=BlurSource(g)){
+                    int bestTi=-1; double bestScore=0;
+                    foreach(int ti in targets){
+                        var st=macro.Steps[ti];
+                        if(string.IsNullOrEmpty(st.ImagePath)||!bitmaps.TryGetValue(st.ImagePath,out var tmpl))continue;
+                        MatchBest(sgb,tmpl,capOrg,out double sc);
+                        if(sc>=st.Confidence/100.0&&sc>bestScore){bestScore=sc;bestTi=ti;}
+                    }
+                    if(bestTi>=0){
+                        SetStatus($"[{macro.Name}] {ri}  스텝{bestTi+1} 먼저 뜸 (일치도 {bestScore:P0}) → 스텝{bestTi+1}로 이동");
+                        return bestTi;
                     }
                 }
                 Thread.Sleep(macro.ScanInterval);
@@ -1124,8 +1133,16 @@ namespace ImageMacro
             while(_isRunning&&!_restartRequested){
                 SetStatus($"[{macro.Name}] {ri}  스텝{idx+1}: '{Path.GetFileName(step.ImagePath)}' 찾는 중...");
                 using var ss=CaptureScreen(out var capOrg); using Mat src=BitmapToMat(ss); using Mat g=new Mat(); Cv2.CvtColor(src,g,ColorConversionCodes.BGRA2GRAY);
-                var pos=MatchTpl(g,tmpl,step.Confidence/100.0,capOrg);
-                if(pos.HasValue){int cx=pos.Value.X+step.ClickOffsetX,cy=pos.Value.Y+step.ClickOffsetY;SetStatus($"[{macro.Name}] {ri}  스텝{idx+1}: 발견! ({cx},{cy}) 클릭");DoClick(cx,cy,step);if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);return true;}
+                using(Mat sgb=BlurSource(g)){
+                    var pt=MatchBest(sgb,tmpl,capOrg,out double sc);
+                    if(sc>=step.Confidence/100.0){
+                        int cx=pt.X+step.ClickOffsetX,cy=pt.Y+step.ClickOffsetY;
+                        SetStatus($"[{macro.Name}] {ri}  스텝{idx+1}: 발견! (일치도 {sc:P0}) ({cx},{cy}) 클릭");
+                        DoClick(cx,cy,step);
+                        if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);
+                        return true;
+                    }
+                }
                 if(step.Timeout>0&&sw.ElapsedMilliseconds>=step.Timeout){HandleTimeout(macro,idx);return false;}
                 Thread.Sleep(macro.ScanInterval);
             }
@@ -1142,7 +1159,24 @@ namespace ImageMacro
                 using var ss=CaptureScreen(out var capOrg); using Mat src=BitmapToMat(ss); using Mat g=new Mat(); Cv2.CvtColor(src,g,ColorConversionCodes.BGRA2GRAY);
                 var names=new List<string>(); foreach(var(_,st)in group)names.Add(Path.GetFileName(st.ImagePath));
                 SetStatus($"[{macro.Name}] {ri}  묶음{group[0].step.GroupId}: {string.Join(" / ",names)} 중 먼저 뜨는 것 찾는 중...");
-                foreach(var(idx,st)in group){if(!bitmaps.TryGetValue(st.ImagePath,out var tmpl))continue;var pos=MatchTpl(g,tmpl,st.Confidence/100.0,capOrg);if(pos.HasValue){int cx=pos.Value.X+st.ClickOffsetX,cy=pos.Value.Y+st.ClickOffsetY;SetStatus($"[{macro.Name}] {ri}  묶음{st.GroupId}: 스텝{idx+1} 먼저 뜸! ({cx},{cy}) 나머지 건너뜀");DoClick(cx,cy,st);if(st.WaitAfter>0)Thread.Sleep(st.WaitAfter);return (true,st);}}
+                // 기준을 넘은 것 중 '가장 비슷한' 것을 고른다.
+                // 목록에서 앞선 것을 그냥 집으면, 버튼 모양이 닮은 다른 후보가
+                // 우연히 기준을 넘었을 때 엉뚱한 스텝이 선택되어 흐름이 튄다.
+                using(Mat sgb=BlurSource(g)){
+                    MacroStep? best=null; int bestIdx=-1; double bestScore=0; var bestPt=System.Drawing.Point.Empty;
+                    foreach(var(idx,st)in group){
+                        if(!bitmaps.TryGetValue(st.ImagePath,out var tmpl))continue;
+                        var pt=MatchBest(sgb,tmpl,capOrg,out double sc);
+                        if(sc>=st.Confidence/100.0&&sc>bestScore){bestScore=sc;best=st;bestIdx=idx;bestPt=pt;}
+                    }
+                    if(best!=null){
+                        int cx=bestPt.X+best.ClickOffsetX,cy=bestPt.Y+best.ClickOffsetY;
+                        SetStatus($"[{macro.Name}] {ri}  묶음{best.GroupId}: 스텝{bestIdx+1} '{Path.GetFileName(best.ImagePath)}' 선택 (일치도 {bestScore:P0}) → ({cx},{cy}) 클릭");
+                        DoClick(cx,cy,best);
+                        if(best.WaitAfter>0)Thread.Sleep(best.WaitAfter);
+                        return (true,best);
+                    }
+                }
                 if(gto>0&&sw.ElapsedMilliseconds>=gto){HandleTimeout(macro,group[0].idx);return (false,null);}
                 Thread.Sleep(macro.ScanInterval);
             }
@@ -1213,7 +1247,11 @@ namespace ImageMacro
             using var ss=CaptureScreen(out var capOrg);
             using Mat src=BitmapToMat(ss); using Mat g=new Mat();
             Cv2.CvtColor(src,g,ColorConversionCodes.BGRA2GRAY);
-            if(!MatchTpl(g,tmpl,step.Confidence/100.0,capOrg).HasValue)return;
+            double hitScore;
+            using(Mat sgb=BlurSource(g)){
+                MatchBest(sgb,tmpl,capOrg,out hitScore);
+                if(hitScore<step.Confidence/100.0)return;
+            }
 
             var changed=new List<string>();
             if(step.ToggleAction==ToggleAction.OnlyThese){
@@ -1237,8 +1275,8 @@ namespace ImageMacro
             string what=step.ToggleAction switch{ToggleAction.On=>"켬",ToggleAction.Flip=>"뒤집음",ToggleAction.OnlyThese=>"만 켬",_=>"끔"};
             string where=idx>=0?$"스텝{idx+1}":"[항상감시]";
             SetStatus(changed.Count>0
-                ? $"[{macro.Name}] {where}: '{Path.GetFileName(step.ImagePath)}' 보임 → 스텝 {string.Join(",",changed)} {what}"
-                : $"[{macro.Name}] {where}: '{Path.GetFileName(step.ImagePath)}' 보임 (이미 {what} 상태)");
+                ? $"[{macro.Name}] {where}: '{Path.GetFileName(step.ImagePath)}' 보임 (일치도 {hitScore:P0}) → 스텝 {string.Join(",",changed)} {what}"
+                : $"[{macro.Name}] {where}: '{Path.GetFileName(step.ImagePath)}' 보임 (일치도 {hitScore:P0}, 이미 {what} 상태)");
             if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);
         }
 
@@ -1657,13 +1695,22 @@ namespace ImageMacro
         // 두 이미지 모두 가우시안 블러 적용 → DWM/ClearType 서브픽셀 노이즈 제거
         static void BlurForMatch(Mat src,Mat dst){Cv2.GaussianBlur(src,dst,new OpenCvSharp.Size(3,3),0);}
 
-        System.Drawing.Point? MatchTpl(Mat sg,Bitmap tmpl,double thr,System.Drawing.Point org){
+        // 원본을 한 번만 블러해 여러 템플릿에 돌려쓴다 (묶음은 후보가 여럿이라 매번 하면 느리다)
+        static Mat BlurSource(Mat sg){var d=new Mat();BlurForMatch(sg,d);return d;}
+
+        // 템플릿이 가장 잘 맞는 자리와 그 점수. 기준 통과 여부와 상관없이 항상 돌려준다.
+        // sgb 는 이미 블러된 원본.
+        static System.Drawing.Point MatchBest(Mat sgb,Bitmap tmpl,System.Drawing.Point org,out double score){
             using Mat t=BitmapToMat(tmpl);using Mat tg=new Mat();Cv2.CvtColor(t,tg,ColorConversionCodes.BGRA2GRAY);
             using Mat tgb=new Mat();BlurForMatch(tg,tgb);
-            using Mat sgb=new Mat();BlurForMatch(sg,sgb);
             using Mat r=new Mat();Cv2.MatchTemplate(sgb,tgb,r,TemplateMatchModes.CCoeffNormed);
-            Cv2.MinMaxLoc(r,out _,out double v,out _,out OpenCvSharp.Point loc);
-            if(v>=thr)return new System.Drawing.Point(org.X+loc.X+t.Width/2,org.Y+loc.Y+t.Height/2);return null;}
+            Cv2.MinMaxLoc(r,out _,out score,out _,out OpenCvSharp.Point loc);
+            return new System.Drawing.Point(org.X+loc.X+t.Width/2,org.Y+loc.Y+t.Height/2);}
+
+        System.Drawing.Point? MatchTpl(Mat sg,Bitmap tmpl,double thr,System.Drawing.Point org){
+            using Mat sgb=BlurSource(sg);
+            var pt=MatchBest(sgb,tmpl,org,out double v);
+            return v>=thr?pt:(System.Drawing.Point?)null;}
 
         // 스코어 + 매칭 영역 반환 (테스트용)
         System.Drawing.Point? MatchTplWithScore(Mat sg,Bitmap tmpl,System.Drawing.Point org,out double score,out Rectangle matchRect){
