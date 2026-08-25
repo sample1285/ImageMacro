@@ -40,6 +40,11 @@ namespace ImageMacro
 
         List<MacroItem> _macros=new(); MacroItem? _current=null; MacroStep? _selStep=null;
         MacroStep? _clipboard=null; volatile bool _isRunning=false; Thread? _thread=null;
+        // 실행 스레드가 "계속 돌아도 되나?" 를 판단할 때 쓴다.
+        // 정지 직후 다시 시작하면 이전 스레드가 잠에서 깨어 _isRunning 이 다시 true 인 것을 보고
+        // 계속 돌아버린다. 그러면 매크로 두 개가 동시에 돌면서 스텝이 뒤엉킨다.
+        // 지금 도는 스레드가 최신 스레드인지 함께 확인해서 그것을 막는다.
+        bool Alive => _isRunning && ReferenceEquals(Thread.CurrentThread,_thread);
         bool _settingHk=false; int _settingHkTarget=0; bool _suppressStepEvt=false;
         volatile bool _restartRequested=false; bool _capturingStepHk=false; bool _pickingPos=false;
         volatile ClickMode _clickMode=ClickMode.Normal;
@@ -479,8 +484,9 @@ namespace ImageMacro
             // 좌측 컬러 바
             card.Controls.Add(new Panel{Location=new System.Drawing.Point(0,0),Size=new System.Drawing.Size(4,cardH),BackColor=GetTypeColor(step.Type)});
             // 번호 + 타입 (한 줄)
-            string num=step.Type==StepType.Simultaneous?$"G{step.GroupId}":$"{idx+1}";
-            card.Controls.Add(new Label{Text=$"{num}. {GetTypeName(step.Type)}",Location=new System.Drawing.Point(9,4),AutoSize=true,Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),ForeColor=GetTypeColor(step.Type),BackColor=Color.Transparent});
+            // 묶음 스텝도 번호를 함께 보여준다 (다른 스텝에서 이 번호로 이동을 지정할 수 있다)
+            string num=step.Type==StepType.Simultaneous?$"{idx+1}. G{step.GroupId}":$"{idx+1}.";
+            card.Controls.Add(new Label{Text=$"{num} {GetTypeName(step.Type)}",Location=new System.Drawing.Point(9,4),AutoSize=true,Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),ForeColor=GetTypeColor(step.Type),BackColor=Color.Transparent});
             // 내용
             string content=GetCardContent(step);
             card.Controls.Add(new Label{Text=content,Location=new System.Drawing.Point(8,24),Size=new System.Drawing.Size(cardW-80,20),Font=new Font("맑은 고딕",8),ForeColor=step.Enabled?Color.FromArgb(60,60,60):Color.Silver,BackColor=Color.Transparent});
@@ -528,7 +534,7 @@ namespace ImageMacro
             var wrapper=new Panel{Size=new System.Drawing.Size(wrapW,wrapH),BackColor=Color.FromArgb(255,250,235)};
             wrapper.Paint+=(s,e)=>{using var pen=new Pen(Color.FromArgb(200,160,60),1){DashStyle=System.Drawing.Drawing2D.DashStyle.Dash};e.Graphics.DrawRectangle(pen,0,0,wrapper.Width-1,wrapper.Height-1);};
             int gid=steps[indices[0]].GroupId;
-            wrapper.Controls.Add(new Label{Text=$"묶음 {gid} — 먼저 뜨는 하나만",Location=new System.Drawing.Point(pad+2,2),AutoSize=true,Font=new Font("맑은 고딕",7.5f,FontStyle.Bold),ForeColor=Color.FromArgb(160,100,0),BackColor=Color.Transparent});
+            wrapper.Controls.Add(new Label{Text=$"묶음 {gid} (스텝 {indices[0]+1}~{indices[^1]+1}) — 먼저 뜨는 하나만",Location=new System.Drawing.Point(pad+2,2),AutoSize=true,Font=new Font("맑은 고딕",7.5f,FontStyle.Bold),ForeColor=Color.FromArgb(160,100,0),BackColor=Color.Transparent});
             int cy=headerH;
             foreach(int idx in indices){
                 var card=MakeStepCard(idx,steps[idx],innerW,sel==idx);
@@ -980,9 +986,12 @@ namespace ImageMacro
                                 "'스텝 켜고 끄기' 스텝만큼은 '시작할 때 꺼둠' 을 풀어주세요.","실행 불가");
                 _isRunning=false;btnRun.Enabled=true;btnStop.Enabled=false;return;
             }
-            if(snap.EventMode)_thread=new Thread(()=>{try{EventLoop(snap);}catch(Exception ex){BeginInvoke(()=>{_isRunning=false;btnRun.Enabled=true;btnStop.Enabled=false;SetStatus($"오류: {ex.Message}");});}});
-            else _thread=new Thread(()=>{try{MacroLoop(snap);}catch(Exception ex){BeginInvoke(()=>{_isRunning=false;btnRun.Enabled=true;btnStop.Enabled=false;SetStatus($"오류: {ex.Message}");});}});
-            _thread.IsBackground=true; _thread.Start();
+            var th=snap.EventMode
+                ?new Thread(()=>{try{EventLoop(snap);}catch(Exception ex){BeginInvoke(()=>{_isRunning=false;btnRun.Enabled=true;btnStop.Enabled=false;SetStatus($"오류: {ex.Message}");});}})
+                :new Thread(()=>{try{MacroLoop(snap);}catch(Exception ex){BeginInvoke(()=>{_isRunning=false;btnRun.Enabled=true;btnStop.Enabled=false;SetStatus($"오류: {ex.Message}");});}});
+            th.IsBackground=true;
+            _thread=th;          // Alive 가 이 스레드를 최신으로 보도록 먼저 담아둔다
+            th.Start();
             string mode=snap.EventMode?"항상 감시":$"반복:{(snap.RepeatCount==0?"무한":snap.RepeatCount+"회")}";
             SetStatus($"'{snap.Name}' 실행 중! {mode}"+(startOff>0?$"  (꺼진 채 시작: {startOff}개)":""));
         }
@@ -1012,7 +1021,7 @@ namespace ImageMacro
             var names=new List<string>();
             foreach(int ti in targets){var st=macro.Steps[ti];names.Add($"{ti+1}:{Path.GetFileName(st.ImagePath)}");}
             string watchLabel=string.Join(", ",names);
-            while(_isRunning&&!_restartRequested){
+            while(Alive&&!_restartRequested){
                 SetStatus($"[{macro.Name}] {ri}  지켜보는 중: [{watchLabel}]");
                 using var ss=CaptureScreen(out var capOrg);using Mat src=BitmapToMat(ss);using Mat g=new Mat();
                 Cv2.CvtColor(src,g,ColorConversionCodes.BGRA2GRAY);
@@ -1064,11 +1073,11 @@ namespace ImageMacro
         void MacroLoop(MacroItem macro)
         {
             var bitmaps=LoadBitmaps(macro); int loopDone=0;
-            while(_isRunning){
+            while(Alive){
                 _restartRequested=false;
                 bool ranSomething=false;
                 int i=0;
-                while(i<macro.Steps.Count&&_isRunning&&!_restartRequested){
+                while(i<macro.Steps.Count&&Alive&&!_restartRequested){
                     var step=macro.Steps[i];
                     if(!step.Enabled){i++;continue;}
                     ranSomething=true;
@@ -1091,18 +1100,18 @@ namespace ImageMacro
                     }
                     else if(step.Type==StepType.KeyInput){RunKey(step);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
                     else if(step.Type==StepType.MouseMove){RunMouseMove(step,macro);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
-                    else if(step.Type==StepType.Delay){SetStatus($"[{macro.Name}] 스텝{i+1}: {step.DelayMs}{MacroItem.UnitName(step.DelayUnit)} 대기...");int rem=step.DelayEffectiveMs;while(rem>0&&_isRunning){int ch=Math.Min(rem,100);Thread.Sleep(ch);rem-=ch;}if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
+                    else if(step.Type==StepType.Delay){SetStatus($"[{macro.Name}] 스텝{i+1}: {step.DelayMs}{MacroItem.UnitName(step.DelayUnit)} 대기...");int rem=step.DelayEffectiveMs;while(rem>0&&Alive){int ch=Math.Min(rem,100);Thread.Sleep(ch);rem-=ch;}if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
                     else if(step.Type==StepType.ToggleSteps){RunToggle(macro,step,bitmaps,i);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
                     else if(step.Type==StepType.Notification){if(!string.IsNullOrEmpty(step.NotificationText))ShowNotification(macro.Name,step.NotificationText);if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
                     if(!ok)break;
                 }
-                if(!_isRunning)break;
+                if(!Alive)break;
                 if(_restartRequested)continue;
                 // 전부 꺼져 있으면 한 바퀴가 순식간에 끝나 CPU 를 태운다 → 탐색 주기만큼 쉰다
                 if(!ranSomething){
                     SetStatus($"[{macro.Name}] 켜져 있는 스텝이 없습니다 — 스위치가 켜주기를 기다리는 중...");
                     int rest=Math.Max(macro.ScanInterval,100);
-                    while(rest>0&&_isRunning){int ch=Math.Min(rest,100);Thread.Sleep(ch);rest-=ch;}
+                    while(rest>0&&Alive){int ch=Math.Min(rest,100);Thread.Sleep(ch);rest-=ch;}
                 }
                 loopDone++;
                 if(macro.RepeatCount>0&&loopDone>=macro.RepeatCount){SetStatus($"[{macro.Name}] {macro.RepeatCount}회 반복 완료.");Invoke(OnStopMacro,null,EventArgs.Empty);break;}
@@ -1118,7 +1127,7 @@ namespace ImageMacro
             if(ms<=0)return;
             string unit=macro.LoopDelayUnit==2?"분":macro.LoopDelayUnit==1?"초":"ms";
             var sw=System.Diagnostics.Stopwatch.StartNew();
-            while(_isRunning&&!_restartRequested&&sw.ElapsedMilliseconds<ms){
+            while(Alive&&!_restartRequested&&sw.ElapsedMilliseconds<ms){
                 int left=(int)((ms-sw.ElapsedMilliseconds+999)/1000);
                 SetStatus($"[{macro.Name}] {loopDone}회 완료 — 다음 반복까지 {macro.LoopDelay}{unit} 대기 중 ({left}초 남음)");
                 Thread.Sleep(100);
@@ -1130,7 +1139,7 @@ namespace ImageMacro
             if(!bitmaps.TryGetValue(step.ImagePath,out var tmpl))return true;
             string ri=macro.RepeatCount==0?$"{loop+1}/무한":$"{loop+1}/{macro.RepeatCount}";
             var sw=System.Diagnostics.Stopwatch.StartNew();
-            while(_isRunning&&!_restartRequested){
+            while(Alive&&!_restartRequested){
                 SetStatus($"[{macro.Name}] {ri}  스텝{idx+1}: '{Path.GetFileName(step.ImagePath)}' 찾는 중...");
                 using var ss=CaptureScreen(out var capOrg); using Mat src=BitmapToMat(ss); using Mat g=new Mat(); Cv2.CvtColor(src,g,ColorConversionCodes.BGRA2GRAY);
                 using(Mat sgb=BlurSource(g)){
@@ -1155,7 +1164,7 @@ namespace ImageMacro
             string ri=macro.RepeatCount==0?$"{loop+1}/무한":$"{loop+1}/{macro.RepeatCount}";
             int gto=0; foreach(var(_,st)in group)if(st.Timeout>0)gto=gto==0?st.Timeout:Math.Min(gto,st.Timeout);
             var sw=System.Diagnostics.Stopwatch.StartNew();
-            while(_isRunning&&!_restartRequested){
+            while(Alive&&!_restartRequested){
                 using var ss=CaptureScreen(out var capOrg); using Mat src=BitmapToMat(ss); using Mat g=new Mat(); Cv2.CvtColor(src,g,ColorConversionCodes.BGRA2GRAY);
                 var names=new List<string>(); foreach(var(_,st)in group)names.Add(Path.GetFileName(st.ImagePath));
                 SetStatus($"[{macro.Name}] {ri}  묶음{group[0].step.GroupId}: {string.Join(" / ",names)} 중 먼저 뜨는 것 찾는 중...");
@@ -1296,11 +1305,11 @@ namespace ImageMacro
             for(int i=0;i<macro.Steps.Count;i++){var st=macro.Steps[i];if(!st.Enabled)continue;if(st.Type!=StepType.Simultaneous)continue;if(string.IsNullOrEmpty(st.ImagePath))continue;triggers.Add((i,st));}
             if(triggers.Count==0){Invoke(()=>{MessageBox.Show("'먼저 뜨는 것 클릭' 스텝이 없습니다.\n항상 감시 모드는 그 스텝들만 지켜봅니다.","항상 감시 모드");OnStopMacro(null,EventArgs.Empty);});DisposeBitmaps(bitmaps);return;}
             SetStatus($"[{macro.Name}] 항상 감시 시작 ({triggers.Count}개 이미지 지켜보는 중)");
-            while(_isRunning){
+            while(Alive){
                 using var ss=CaptureScreen(out var capOrg); using Mat src=BitmapToMat(ss); using Mat g=new Mat(); Cv2.CvtColor(src,g,ColorConversionCodes.BGRA2GRAY);
                 bool anyFired=false;
                 foreach(var(idx,step)in triggers){
-                    if(!_isRunning)break;
+                    if(!Alive)break;
                     if(!bitmaps.TryGetValue(step.ImagePath,out var tmpl))continue;
                     var pos=MatchTpl(g,tmpl,step.Confidence/100.0,capOrg);
                     if(!pos.HasValue)continue;
@@ -1315,7 +1324,7 @@ namespace ImageMacro
                     }
                     anyFired=true;
                 }
-                if(_isRunning&&!anyFired)Thread.Sleep(macro.ScanInterval);
+                if(Alive&&!anyFired)Thread.Sleep(macro.ScanInterval);
             }
             DisposeBitmaps(bitmaps);
         }
@@ -1326,7 +1335,7 @@ namespace ImageMacro
                 case StepType.KeyInput:RunKey(action);break;
                 case StepType.MouseMove:RunMouseMove(action,macro);break;
                 case StepType.ToggleSteps:RunToggle(macro,action,bitmaps,-1);break;
-                case StepType.Delay:int rem=action.DelayEffectiveMs;while(rem>0&&_isRunning){int ch=Math.Min(rem,100);Thread.Sleep(ch);rem-=ch;}break;
+                case StepType.Delay:int rem=action.DelayEffectiveMs;while(rem>0&&Alive){int ch=Math.Min(rem,100);Thread.Sleep(ch);rem-=ch;}break;
                 case StepType.Notification:if(!string.IsNullOrEmpty(action.NotificationText))ShowNotification(macro.Name,action.NotificationText);break;
                 case StepType.Sequential:case StepType.Simultaneous:
                     if(bitmaps.TryGetValue(action.ImagePath,out var tmpl)){using var ss=CaptureScreen(out var capOrg);using Mat src=BitmapToMat(ss);using Mat g2=new Mat();Cv2.CvtColor(src,g2,ColorConversionCodes.BGRA2GRAY);var pos=MatchTpl(g2,tmpl,action.Confidence/100.0,capOrg);if(pos.HasValue){int ax=pos.Value.X+action.ClickOffsetX,ay=pos.Value.Y+action.ClickOffsetY;DoClick(ax,ay,action);}}break;
@@ -1397,13 +1406,13 @@ namespace ImageMacro
             int chX(int c,int lane)=>c<0?8+lane*LANE:colX(c)+CW+10+lane*LANE;   // c번 칸 오른쪽 통로
 
             var cardRc=new Dictionary<int,Rectangle>();
-            var grpRc=new List<(Rectangle rc,int gid)>();
+            var grpRc=new List<(Rectangle rc,int gid,int first,int last)>();
             var blockRc=new Rectangle[nb];
             for(int k=0;k<nb;k++){
                 int x=colX(bCol[k]),yy=bY[k];
                 if(bGid[k]>=0){
                     blockRc[k]=new Rectangle(x-GPAD,yy,CW+GPAD*2,bH[k]);
-                    grpRc.Add((blockRc[k],bGid[k]));
+                    grpRc.Add((blockRc[k],bGid[k],bMem[k][0],bMem[k][^1]));
                     int cyy=yy+GHEAD;
                     foreach(int m in bMem[k]){cardRc[m]=new Rectangle(x,cyy,CW,CH);cyy+=CH+4;}
                 }else{
@@ -1485,7 +1494,7 @@ namespace ImageMacro
             void Shift(){
                 foreach(var key in new List<int>(cardRc.Keys)){var r=cardRc[key];r.Y+=top;cardRc[key]=r;}
                 for(int k=0;k<nb;k++){var r=blockRc[k];r.Y+=top;blockRc[k]=r;}
-                for(int k=0;k<grpRc.Count;k++){var(r,g)=grpRc[k];r.Y+=top;grpRc[k]=(r,g);}
+                for(int k=0;k<grpRc.Count;k++){var(r,g,gf,gl)=grpRc[k];r.Y+=top;grpRc[k]=(r,g,gf,gl);}
                 for(int k=0;k<route.Count;k++)for(int j=0;j<route[k].Length;j++)route[k][j]=new System.Drawing.Point(route[k][j].X,route[k][j].Y+top);
                 for(int k=0;k<srcPt.Length;k++){srcPt[k]=new System.Drawing.Point(srcPt[k].X,srcPt[k].Y+top);dstPt[k]=new System.Drawing.Point(dstPt[k].X,dstPt[k].Y+top);}
             }
@@ -1539,14 +1548,14 @@ namespace ImageMacro
                 g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
                 // 묶음 그룹 상자
-                foreach(var(box,gid)in grpRc){
+                foreach(var(box,gid,gf,gl)in grpRc){
                     using var bg=new SolidBrush(Color.FromArgb(255,250,238));
                     g.FillRectangle(bg,box);
                     using var pen=new Pen(Color.FromArgb(205,165,70),1){DashStyle=System.Drawing.Drawing2D.DashStyle.Dash};
                     g.DrawRectangle(pen,box);
                     using var br=new SolidBrush(Color.FromArgb(150,95,0));
                     using var ft=new Font("맑은 고딕",8,FontStyle.Bold);
-                    g.DrawString($"묶음 {gid} — 이 중 먼저 뜨는 하나만 클릭",ft,br,box.X+8,box.Y+3);
+                    g.DrawString($"묶음 {gid} (스텝 {gf+1}~{gl+1}) — 이 중 먼저 뜨는 하나만 클릭",ft,br,box.X+8,box.Y+3);
                 }
 
                 // 순서대로 실행: 같은 칸 안은 아래로, 칸이 바뀌면 다음 칸 위로
@@ -1633,8 +1642,8 @@ namespace ImageMacro
         {
             var card=new Panel{Size=new System.Drawing.Size(w,h),BackColor=GetCardBg(step.Type),Cursor=Cursors.Hand};
             card.Controls.Add(new Panel{Location=new System.Drawing.Point(0,0),Size=new System.Drawing.Size(4,h),BackColor=GetTypeColor(step.Type)});
-            string num=step.Type==StepType.Simultaneous?$"G{step.GroupId}":$"{idx+1}";
-            card.Controls.Add(new Label{Text=$"{num}. {GetTypeName(step.Type)}",Location=new System.Drawing.Point(10,6),AutoSize=true,Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),ForeColor=GetTypeColor(step.Type),BackColor=Color.Transparent});
+            string num=step.Type==StepType.Simultaneous?$"{idx+1}. G{step.GroupId}":$"{idx+1}.";
+            card.Controls.Add(new Label{Text=$"{num} {GetTypeName(step.Type)}",Location=new System.Drawing.Point(10,6),AutoSize=true,Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),ForeColor=GetTypeColor(step.Type),BackColor=Color.Transparent});
             card.Controls.Add(new Label{Text=GetCardContent(step),Location=new System.Drawing.Point(10,28),Size=new System.Drawing.Size(w-62,20),Font=new Font("맑은 고딕",8),ForeColor=step.Enabled?Color.FromArgb(60,60,60):Color.Silver,BackColor=Color.Transparent});
             if(!step.Enabled)card.Controls.Add(new Label{Text="OFF",Location=new System.Drawing.Point(w-38,6),AutoSize=true,Font=new Font("맑은 고딕",7,FontStyle.Bold),ForeColor=Color.FromArgb(170,170,170),BackColor=Color.Transparent});
             card.Paint+=(s,e)=>{using var pen=new Pen(GetTypeColor(step.Type));e.Graphics.DrawRectangle(pen,0,0,card.Width-1,card.Height-1);};
@@ -1724,7 +1733,7 @@ namespace ImageMacro
             double thr=_selStep!=null?_selStep.Confidence/100.0:0.8;
             if(score>=thr)return new System.Drawing.Point(org.X+loc.X+t.Width/2,org.Y+loc.Y+t.Height/2);return null;}
 
-        void DoClick(int x,int y,MacroStep step){for(int ci=0;ci<step.ClickCount&&_isRunning;ci++){ClickAt(x,y,step.RightClick);if(ci<step.ClickCount-1)Thread.Sleep(step.ClickDelay);}}
+        void DoClick(int x,int y,MacroStep step){for(int ci=0;ci<step.ClickCount&&Alive;ci++){ClickAt(x,y,step.RightClick);if(ci<step.ClickCount-1)Thread.Sleep(step.ClickDelay);}}
         static unsafe Mat BitmapToMat(Bitmap bmp){var rect=new Rectangle(0,0,bmp.Width,bmp.Height);BitmapData bd=bmp.LockBits(rect,ImageLockMode.ReadOnly,PixelFormat.Format32bppArgb);try{Mat mat=new Mat(bmp.Height,bmp.Width,MatType.CV_8UC4);int stride=Math.Abs(bd.Stride);long step=mat.Step();byte* src=(byte*)bd.Scan0;byte* dst=(byte*)mat.Data;for(int y=0;y<bmp.Height;y++)Buffer.MemoryCopy(src+y*stride,dst+y*step,step,step);return mat;}finally{bmp.UnlockBits(bd);}}
         void ClickAt(int x,int y,bool right){
             if(_clickMode==ClickMode.Adb){AdbClickAt(x,y,right);return;}
