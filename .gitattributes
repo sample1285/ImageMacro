@@ -1,0 +1,5 @@
+# 이 저장소는 윈도우 전용입니다. 텍스트는 CRLF 로 통일합니다.
+* text=auto eol=crlf
+
+*.png binary
+*.ico binary
