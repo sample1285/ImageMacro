@@ -83,6 +83,9 @@ namespace ImageMacro
         Panel   pnlDelay=new(); NumericUpDown nudDelayMs=new(); ComboBox cmbDelayUnit=new(); Label lblDelayHint=new();
         // notification panel
         Panel   pnlNotif=new(); TextBox txtNotifText=new();
+        // 스텝 켜고 끄기
+        Panel   pnlToggleRow=new(); TextBox txtToggleTargets=new(); ComboBox cmbToggleAction=new();
+        Panel   pnlClickCfg=new(),pnlConfRow=new(); Label lblPreviewHint=new(); int _confRowY=0;
         ComboBox cmbClickMode=new(); Button btnAdbCfg=new(); ComboBox cmbMonitor=new(); ToolTip? _tips=null;
         CheckBox chkEventMode=new(); CheckBox chkAntiCapture=new();
         Label   lblStatus=new();
@@ -256,7 +259,7 @@ namespace ImageMacro
             pnlRightInner.Controls.Add(MkSL("── 스텝 종류 ─────────────────────────────────────────────",rx,ry)); ry+=18;
             pnlRightInner.Controls.Add(MkL("종류:",rx,ry+3));
             cmbStepType.Location=new System.Drawing.Point(ix,ry); cmbStepType.Size=new System.Drawing.Size(220,24); cmbStepType.DropDownStyle=ComboBoxStyle.DropDownList; cmbStepType.Font=new Font("맑은 고딕",9);
-            cmbStepType.Items.AddRange(new object[]{"이미지 찾아 클릭","여러 이미지 중 먼저 뜨는 것 클릭","키보드 입력","마우스 이동·클릭","시간 대기","알림 띄우기"});
+            cmbStepType.Items.AddRange(new object[]{"이미지 찾아 클릭","여러 이미지 중 먼저 뜨는 것 클릭","키보드 입력","마우스 이동·클릭","시간 대기","알림 띄우기","이미지 보이면 스텝 켜고 끄기"});
             cmbStepType.SelectedIndex=0; cmbStepType.SelectedIndexChanged+=OnStepTypeChanged;
             pnlRightInner.Controls.Add(cmbStepType); ry+=32;
 
@@ -290,6 +293,18 @@ namespace ImageMacro
                 pnlGroupRow.Controls.Add(new Label{Text="같이 볼 묶음 번호:",Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),Location=new System.Drawing.Point(6,7),AutoSize=true,ForeColor=Color.FromArgb(140,60,0)});
                 nudGroupId.Location=new System.Drawing.Point(PIX,5); nudGroupId.Size=new System.Drawing.Size(55,22); nudGroupId.Minimum=1; nudGroupId.Maximum=99; nudGroupId.Value=1; nudGroupId.ValueChanged+=(s,e)=>{if(_selStep!=null){_selStep.GroupId=(int)nudGroupId.Value;RefreshStepList();}}; pnlGroupRow.Controls.Add(nudGroupId);
                 pnlGroupRow.Controls.Add(new Label{Text="(같은 번호끼리 한꺼번에 감시)",ForeColor=Color.Gray,Font=new Font("맑은 고딕",8),Location=new System.Drawing.Point(PIX+64,8),AutoSize=true});
+                // 켜고 끄기 설정 줄 (묶음 번호 줄과 같은 자리 — 둘은 같이 안 보인다)
+                pnlToggleRow.Location=new System.Drawing.Point(0,y); pnlToggleRow.Size=new System.Drawing.Size(pw,30); pnlToggleRow.BackColor=Color.FromArgb(248,240,255); pnlToggleRow.BorderStyle=BorderStyle.FixedSingle; pnlImage.Controls.Add(pnlToggleRow);
+                pnlToggleRow.Controls.Add(new Label{Text="이 이미지가 보이면 스텝",Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),Location=new System.Drawing.Point(6,7),AutoSize=true,ForeColor=Color.FromArgb(110,30,150)});
+                txtToggleTargets.Location=new System.Drawing.Point(PIX,4); txtToggleTargets.Size=new System.Drawing.Size(90,23); txtToggleTargets.Font=new Font("맑은 고딕",9); txtToggleTargets.PlaceholderText="예: 7,8,9";
+                txtToggleTargets.TextChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.ToggleTargets=txtToggleTargets.Text;RefreshStepList();}};
+                pnlToggleRow.Controls.Add(txtToggleTargets);
+                pnlToggleRow.Controls.Add(new Label{Text="번을",Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),Location=new System.Drawing.Point(PIX+96,7),AutoSize=true,ForeColor=Color.FromArgb(110,30,150)});
+                cmbToggleAction.Location=new System.Drawing.Point(PIX+128,4); cmbToggleAction.Size=new System.Drawing.Size(120,23); cmbToggleAction.DropDownStyle=ComboBoxStyle.DropDownList; cmbToggleAction.Font=new Font("맑은 고딕",8.5f);
+                cmbToggleAction.Items.AddRange(new object[]{"끄기","켜기","반대로"});
+                cmbToggleAction.SelectedIndex=0;
+                cmbToggleAction.SelectedIndexChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.ToggleAction=(ToggleAction)cmbToggleAction.SelectedIndex;RefreshStepList();}};
+                pnlToggleRow.Controls.Add(cmbToggleAction);
                 y+=38;
                 // 한 줄: [파일: ──경로──] [선택] [인식 테스트]
                 pnlImage.Controls.Add(MkL("이미지 파일:",0,y+3));
@@ -311,7 +326,7 @@ namespace ImageMacro
                 y+=22;
                 // 미리보기
                 picPreview.Location=new System.Drawing.Point(0,y); picPreview.Size=new System.Drawing.Size(pw,140); picPreview.BorderStyle=BorderStyle.FixedSingle; picPreview.SizeMode=PictureBoxSizeMode.Zoom; picPreview.BackColor=Color.FromArgb(230,230,235); picPreview.Cursor=Cursors.Cross; picPreview.Paint+=PicPreview_Paint; picPreview.MouseClick+=PicPreview_Click; pnlImage.Controls.Add(picPreview);
-                pnlImage.Controls.Add(new Label{Text="▲ 미리보기 클릭 = 클릭 위치 지정",Location=new System.Drawing.Point(0,y+142),Size=new System.Drawing.Size(pw,16),ForeColor=Color.FromArgb(0,110,180),Font=new Font("맑은 고딕",8)});
+                lblPreviewHint.Text="▲ 미리보기 클릭 = 클릭 위치 지정"; lblPreviewHint.Location=new System.Drawing.Point(0,y+142); lblPreviewHint.Size=new System.Drawing.Size(pw,16); lblPreviewHint.ForeColor=Color.FromArgb(0,110,180); lblPreviewHint.Font=new Font("맑은 고딕",8); pnlImage.Controls.Add(lblPreviewHint);
                 y+=160;
                 // 클릭 위치 오프셋
                 pnlClickPos.Location=new System.Drawing.Point(0,y); pnlClickPos.Size=new System.Drawing.Size(pw,54); pnlClickPos.BorderStyle=BorderStyle.FixedSingle; pnlClickPos.BackColor=Color.FromArgb(245,255,245); pnlImage.Controls.Add(pnlClickPos);
@@ -323,17 +338,24 @@ namespace ImageMacro
                 lblClickInfo.Location=new System.Drawing.Point(204,31); lblClickInfo.AutoSize=true; lblClickInfo.Font=new Font("맑은 고딕",8); lblClickInfo.ForeColor=Color.DarkGreen; lblClickInfo.Text="(이미지 중앙)"; pnlClickPos.Controls.Add(lblClickInfo);
                 btnResetClick.Text="중앙으로 되돌리기"; btnResetClick.Location=new System.Drawing.Point(pw-136,26); btnResetClick.Size=new System.Drawing.Size(128,26); btnResetClick.Click+=BtnResetClick_Click; pnlClickPos.Controls.Add(btnResetClick);
                 y+=62;
-                // 클릭 설정
-                pnlImage.Controls.Add(MkSL("── 클릭 설정 ───────────────────────────────────────────────",0,y)); y+=18;
-                rdClickL.Text="좌클릭"; rdClickL.Location=new System.Drawing.Point(0,y); rdClickL.AutoSize=true; rdClickL.Checked=true; rdClickR.Text="우클릭"; rdClickR.Location=new System.Drawing.Point(PIX,y); rdClickR.AutoSize=true;
-                rdClickL.CheckedChanged+=OnClickTypeChanged; rdClickR.CheckedChanged+=OnClickTypeChanged; pnlImage.Controls.Add(rdClickL); pnlImage.Controls.Add(rdClickR); y+=26;
-                pnlImage.Controls.Add(MkL("클릭 횟수:",0,y+4)); nudClicks.Location=new System.Drawing.Point(PIX,y); nudClicks.Size=new System.Drawing.Size(80,23); nudClicks.Minimum=1; nudClicks.Maximum=100; nudClicks.Value=1; nudClicks.ValueChanged+=OnNudClicks; pnlImage.Controls.Add(nudClicks); y+=26;
-                pnlImage.Controls.Add(MkL("클릭 사이 대기(ms):",0,y+4)); nudCDelay.Location=new System.Drawing.Point(PIX,y); nudCDelay.Size=new System.Drawing.Size(80,23); nudCDelay.Minimum=50; nudCDelay.Maximum=5000; nudCDelay.Value=100; nudCDelay.ValueChanged+=OnNudCDelay; pnlImage.Controls.Add(nudCDelay); y+=26;
-                pnlImage.Controls.Add(MkL("찾기 제한 시간(ms):",0,y+4)); nudTimeout.Location=new System.Drawing.Point(PIX,y); nudTimeout.Size=new System.Drawing.Size(80,23); nudTimeout.Minimum=0; nudTimeout.Maximum=60000; nudTimeout.Value=0; nudTimeout.ValueChanged+=(s,e)=>{if(_selStep!=null)_selStep.Timeout=(int)nudTimeout.Value;}; pnlImage.Controls.Add(nudTimeout);
-                pnlImage.Controls.Add(new Label{Text="(0 = 제한 없음)",Location=new System.Drawing.Point(PIX+88,y+4),AutoSize=true,ForeColor=Color.Gray,Font=new Font("맑은 고딕",8)}); y+=30;
-                pnlImage.Controls.Add(MkSL("── 이미지 일치도 ────────────────────────────────────────────",0,y)); y+=18;
-                pnlImage.Controls.Add(MkL("일치도 기준:",0,y+5)); tbConf.Location=new System.Drawing.Point(PIX,y); tbConf.Size=new System.Drawing.Size(280,28); tbConf.Minimum=50; tbConf.Maximum=99; tbConf.Value=80; tbConf.TickFrequency=5; tbConf.Scroll+=OnConf; pnlImage.Controls.Add(tbConf);
-                lblConf.Text="80%"; lblConf.Location=new System.Drawing.Point(PIX+290,y+5); lblConf.AutoSize=true; pnlImage.Controls.Add(lblConf);
+                // 클릭 설정 (켜고 끄기 스텝에서는 통째로 숨긴다)
+                pnlClickCfg.Location=new System.Drawing.Point(0,y); pnlClickCfg.Size=new System.Drawing.Size(pw,126); pnlClickCfg.BackColor=Color.Transparent; pnlImage.Controls.Add(pnlClickCfg);
+                {
+                    int c=0;
+                    pnlClickCfg.Controls.Add(MkSL("── 클릭 설정 ───────────────────────────────────────────────",0,c)); c+=18;
+                    rdClickL.Text="좌클릭"; rdClickL.Location=new System.Drawing.Point(0,c); rdClickL.AutoSize=true; rdClickL.Checked=true; rdClickR.Text="우클릭"; rdClickR.Location=new System.Drawing.Point(PIX,c); rdClickR.AutoSize=true;
+                    rdClickL.CheckedChanged+=OnClickTypeChanged; rdClickR.CheckedChanged+=OnClickTypeChanged; pnlClickCfg.Controls.Add(rdClickL); pnlClickCfg.Controls.Add(rdClickR); c+=26;
+                    pnlClickCfg.Controls.Add(MkL("클릭 횟수:",0,c+4)); nudClicks.Location=new System.Drawing.Point(PIX,c); nudClicks.Size=new System.Drawing.Size(80,23); nudClicks.Minimum=1; nudClicks.Maximum=100; nudClicks.Value=1; nudClicks.ValueChanged+=OnNudClicks; pnlClickCfg.Controls.Add(nudClicks); c+=26;
+                    pnlClickCfg.Controls.Add(MkL("클릭 사이 대기(ms):",0,c+4)); nudCDelay.Location=new System.Drawing.Point(PIX,c); nudCDelay.Size=new System.Drawing.Size(80,23); nudCDelay.Minimum=50; nudCDelay.Maximum=5000; nudCDelay.Value=100; nudCDelay.ValueChanged+=OnNudCDelay; pnlClickCfg.Controls.Add(nudCDelay); c+=26;
+                    pnlClickCfg.Controls.Add(MkL("찾기 제한 시간(ms):",0,c+4)); nudTimeout.Location=new System.Drawing.Point(PIX,c); nudTimeout.Size=new System.Drawing.Size(80,23); nudTimeout.Minimum=0; nudTimeout.Maximum=60000; nudTimeout.Value=0; nudTimeout.ValueChanged+=(s,e)=>{if(_selStep!=null)_selStep.Timeout=(int)nudTimeout.Value;}; pnlClickCfg.Controls.Add(nudTimeout);
+                    pnlClickCfg.Controls.Add(new Label{Text="(0 = 제한 없음)",Location=new System.Drawing.Point(PIX+88,c+4),AutoSize=true,ForeColor=Color.Gray,Font=new Font("맑은 고딕",8)});
+                }
+                y+=126;
+                _confRowY=y;
+                pnlConfRow.Location=new System.Drawing.Point(0,y); pnlConfRow.Size=new System.Drawing.Size(pw,50); pnlConfRow.BackColor=Color.Transparent; pnlImage.Controls.Add(pnlConfRow);
+                pnlConfRow.Controls.Add(MkSL("── 이미지 일치도 ────────────────────────────────────────────",0,0));
+                pnlConfRow.Controls.Add(MkL("일치도 기준:",0,23)); tbConf.Location=new System.Drawing.Point(PIX,18); tbConf.Size=new System.Drawing.Size(280,28); tbConf.Minimum=50; tbConf.Maximum=99; tbConf.Value=80; tbConf.TickFrequency=5; tbConf.Scroll+=OnConf; pnlConfRow.Controls.Add(tbConf);
+                lblConf.Text="80%"; lblConf.Location=new System.Drawing.Point(PIX+290,23); lblConf.AutoSize=true; pnlConfRow.Controls.Add(lblConf);
             }
 
             // ── 키 입력 패널 ──
@@ -417,26 +439,34 @@ namespace ImageMacro
 
         void ShowPanelForType(StepType t)
         {
-            pnlImage.Visible=t==StepType.Sequential||t==StepType.Simultaneous;
+            bool img=t==StepType.Sequential||t==StepType.Simultaneous||t==StepType.ToggleSteps;
+            pnlImage.Visible=img;
             pnlKey.Visible=t==StepType.KeyInput;
             pnlMove.Visible=t==StepType.MouseMove;
             pnlDelay.Visible=t==StepType.Delay;
             pnlNotif.Visible=t==StepType.Notification;
             pnlGroupRow.Visible=t==StepType.Simultaneous;
+            pnlToggleRow.Visible=t==StepType.ToggleSteps;
+            // 켜고 끄기 스텝은 클릭을 하지 않으니 클릭 관련 설정을 숨기고 일치도만 남긴다
+            bool clicks=t!=StepType.ToggleSteps;
+            pnlClickPos.Visible=clicks; pnlClickCfg.Visible=clicks; lblPreviewHint.Visible=clicks;
+            pnlConfRow.Top=clicks?_confRowY:pnlClickPos.Top;
         }
 
         // ══════════════════════════════════════════════════════
         //  카드 시스템
         // ══════════════════════════════════════════════════════
-        static Color GetTypeColor(StepType t)=>t switch{StepType.Sequential=>Color.FromArgb(0,80,180),StepType.Simultaneous=>Color.FromArgb(160,80,0),StepType.KeyInput=>Color.FromArgb(80,0,160),StepType.MouseMove=>Color.FromArgb(0,120,120),StepType.Delay=>Color.FromArgb(96,96,96),StepType.Notification=>Color.FromArgb(0,128,80),_=>Color.Gray};
-        static Color GetCardBg(StepType t)=>t switch{StepType.Sequential=>Color.FromArgb(240,245,255),StepType.Simultaneous=>Color.FromArgb(255,248,240),StepType.KeyInput=>Color.FromArgb(245,240,255),StepType.MouseMove=>Color.FromArgb(240,255,255),StepType.Delay=>Color.FromArgb(245,245,245),StepType.Notification=>Color.FromArgb(240,255,245),_=>Color.White};
+        static Color GetTypeColor(StepType t)=>t switch{StepType.Sequential=>Color.FromArgb(0,80,180),StepType.Simultaneous=>Color.FromArgb(160,80,0),StepType.KeyInput=>Color.FromArgb(80,0,160),StepType.MouseMove=>Color.FromArgb(0,120,120),StepType.Delay=>Color.FromArgb(96,96,96),StepType.Notification=>Color.FromArgb(0,128,80),StepType.ToggleSteps=>Color.FromArgb(130,40,170),_=>Color.Gray};
+        static Color GetCardBg(StepType t)=>t switch{StepType.Sequential=>Color.FromArgb(240,245,255),StepType.Simultaneous=>Color.FromArgb(255,248,240),StepType.KeyInput=>Color.FromArgb(245,240,255),StepType.MouseMove=>Color.FromArgb(240,255,255),StepType.Delay=>Color.FromArgb(245,245,245),StepType.Notification=>Color.FromArgb(240,255,245),StepType.ToggleSteps=>Color.FromArgb(248,240,255),_=>Color.White};
         static string GetTypeIcon(StepType t)=>"";
-        static string GetTypeName(StepType t)=>t switch{StepType.Sequential=>"이미지 찾아 클릭",StepType.Simultaneous=>"먼저 뜨는 것 클릭",StepType.KeyInput=>"키보드 입력",StepType.MouseMove=>"마우스 이동·클릭",StepType.Delay=>"시간 대기",StepType.Notification=>"알림 띄우기",_=>""};
+        static string GetTypeName(StepType t)=>t switch{StepType.Sequential=>"이미지 찾아 클릭",StepType.Simultaneous=>"먼저 뜨는 것 클릭",StepType.KeyInput=>"키보드 입력",StepType.MouseMove=>"마우스 이동·클릭",StepType.Delay=>"시간 대기",StepType.Notification=>"알림 띄우기",StepType.ToggleSteps=>"스텝 켜고 끄기",_=>""};
         static string GetCardContent(MacroStep st)=>st.Type switch{
             StepType.KeyInput=>string.IsNullOrEmpty(st.KeyText)?$"단축키: {st.HotKey}":$"타이핑: \"{st.KeyText}\"",
             StepType.MouseMove=>st.MoveAction==MoveAction.MoveOnly?$"이동: ({st.MoveX},{st.MoveY})":$"{(st.MoveAction==MoveAction.LeftClick?"좌클릭":"우클릭")}: ({st.MoveX},{st.MoveY})",
             StepType.Delay=>$"{st.DelayMs}{MacroItem.UnitName(st.DelayUnit)} 대기",
             StepType.Notification=>string.IsNullOrEmpty(st.NotificationText)?"(메시지 없음)":$"\"{st.NotificationText}\"",
+            StepType.ToggleSteps=>string.IsNullOrEmpty(st.ImagePath)?"(이미지 미지정)"
+                :$"{Path.GetFileName(st.ImagePath)} 보이면 {(string.IsNullOrWhiteSpace(st.ToggleTargets)?"(대상 없음)":st.ToggleTargets)} {ToggleActionName(st.ToggleAction)}",
             _=>string.IsNullOrEmpty(st.ImagePath)?"(이미지 미지정)":Path.GetFileName(st.ImagePath)};
 
         Panel MakeStepCard(int idx,MacroStep step,int cardW,bool selected)
@@ -589,7 +619,7 @@ namespace ImageMacro
         void OnStepTypeChanged(object? s,EventArgs e)
         {
             if(_selStep==null)return;
-            StepType t=cmbStepType.SelectedIndex switch{0=>StepType.Sequential,1=>StepType.Simultaneous,2=>StepType.KeyInput,3=>StepType.MouseMove,4=>StepType.Delay,5=>StepType.Notification,_=>StepType.Sequential};
+            StepType t=cmbStepType.SelectedIndex switch{0=>StepType.Sequential,1=>StepType.Simultaneous,2=>StepType.KeyInput,3=>StepType.MouseMove,4=>StepType.Delay,5=>StepType.Notification,6=>StepType.ToggleSteps,_=>StepType.Sequential};
             _selStep.Type=t; ShowPanelForType(t); RefreshStepList();
         }
 
@@ -874,7 +904,7 @@ namespace ImageMacro
         {
             nudClicks.ValueChanged-=OnNudClicks; nudCDelay.ValueChanged-=OnNudCDelay;
             cmbStepType.SelectedIndexChanged-=OnStepTypeChanged;
-            cmbStepType.SelectedIndex=st.Type switch{StepType.Sequential=>0,StepType.Simultaneous=>1,StepType.KeyInput=>2,StepType.MouseMove=>3,StepType.Delay=>4,StepType.Notification=>5,_=>0};
+            cmbStepType.SelectedIndex=st.Type switch{StepType.Sequential=>0,StepType.Simultaneous=>1,StepType.KeyInput=>2,StepType.MouseMove=>3,StepType.Delay=>4,StepType.Notification=>5,StepType.ToggleSteps=>6,_=>0};
             SetNud(nudWaitAfter,st.WaitAfter); chkEnabled.Checked=st.Enabled;
             SetNud(nudJump,st.JumpOnSuccess);
             ShowPanelForType(st.Type);
@@ -900,6 +930,7 @@ namespace ImageMacro
             lblPickPos.Text="위 버튼 클릭 후 3초 안에 원하는 위치로 마우스를 이동하세요."; lblPickPos.ForeColor=Color.Gray;
             // 대기
             SetNud(nudDelayMs,st.DelayMs); cmbDelayUnit.SelectedIndex=Math.Clamp(st.DelayUnit,0,2); UpdateDelayHint(st);
+            txtToggleTargets.Text=st.ToggleTargets; cmbToggleAction.SelectedIndex=(int)st.ToggleAction;
             // 알림
             txtNotifText.Text=st.NotificationText;
             // 감시 대상
@@ -928,7 +959,7 @@ namespace ImageMacro
             if(_current.EventMode){
                 foreach(var st in _current.Steps)if(st.Enabled&&st.Type==StepType.Simultaneous&&string.IsNullOrEmpty(st.ImagePath)){MessageBox.Show("이미지 파일이 지정되지 않은 '묶어 찾기' 스텝이 있습니다.","실행 불가");return;}
             }else{
-                foreach(var st in _current.Steps)if(st.Enabled&&(st.Type==StepType.Sequential||st.Type==StepType.Simultaneous)&&string.IsNullOrEmpty(st.ImagePath)){MessageBox.Show("이미지 파일이 지정되지 않은 스텝이 있습니다.","실행 불가");return;}
+                foreach(var st in _current.Steps)if(st.Enabled&&(st.Type==StepType.Sequential||st.Type==StepType.Simultaneous||st.Type==StepType.ToggleSteps)&&string.IsNullOrEmpty(st.ImagePath)){MessageBox.Show("이미지 파일이 지정되지 않은 스텝이 있습니다.","실행 불가");return;}
             }
             _isRunning=true; btnRun.Enabled=false; btnStop.Enabled=true;
             _searchMonitor=_current.SearchMonitor;
@@ -1025,6 +1056,7 @@ namespace ImageMacro
                     else if(step.Type==StepType.KeyInput){RunKey(step);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
                     else if(step.Type==StepType.MouseMove){RunMouseMove(step,macro);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
                     else if(step.Type==StepType.Delay){SetStatus($"[{macro.Name}] 스텝{i+1}: {step.DelayMs}{MacroItem.UnitName(step.DelayUnit)} 대기...");int rem=step.DelayEffectiveMs;while(rem>0&&_isRunning){int ch=Math.Min(rem,100);Thread.Sleep(ch);rem-=ch;}if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
+                    else if(step.Type==StepType.ToggleSteps){RunToggle(macro,step,bitmaps,i);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
                     else if(step.Type==StepType.Notification){if(!string.IsNullOrEmpty(step.NotificationText))ShowNotification(macro.Name,step.NotificationText);if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);i=NextAfterStep(macro,step,i+1,bitmaps,loopDone);}
                     if(!ok)break;
                 }
@@ -1134,6 +1166,38 @@ namespace ImageMacro
             if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);
         }
 
+        static string ToggleActionName(ToggleAction a)=>a switch{ToggleAction.On=>"켜기",ToggleAction.Flip=>"반대로",_=>"끄기"};
+
+        // 지정한 이미지가 지금 화면에 보이면 대상 스텝들을 켜거나 끈다.
+        // 안 보이면 아무것도 하지 않고 그냥 지나간다 (기다리지 않는다).
+        // macro 는 실행용 복사본이라 저장된 매크로는 바뀌지 않는다.
+        void RunToggle(MacroItem macro,MacroStep step,Dictionary<string,Bitmap> bitmaps,int idx)
+        {
+            if(string.IsNullOrEmpty(step.ImagePath)||!bitmaps.TryGetValue(step.ImagePath,out var tmpl))return;
+            var targets=ParseWatchTargets(step.ToggleTargets,macro.Steps.Count);
+            if(targets.Count==0)return;
+
+            using var ss=CaptureScreen(out var capOrg);
+            using Mat src=BitmapToMat(ss); using Mat g=new Mat();
+            Cv2.CvtColor(src,g,ColorConversionCodes.BGRA2GRAY);
+            if(!MatchTpl(g,tmpl,step.Confidence/100.0,capOrg).HasValue)return;
+
+            var changed=new List<string>();
+            foreach(int ti in targets){
+                bool on=step.ToggleAction switch{
+                    ToggleAction.On=>true,
+                    ToggleAction.Flip=>!macro.Steps[ti].Enabled,
+                    _=>false};
+                if(macro.Steps[ti].Enabled!=on){macro.Steps[ti].Enabled=on;changed.Add($"{ti+1}");}
+            }
+            string what=step.ToggleAction==ToggleAction.On?"켬":step.ToggleAction==ToggleAction.Flip?"뒤집음":"끔";
+            string where=idx>=0?$"스텝{idx+1}":"[항상감시]";
+            SetStatus(changed.Count>0
+                ? $"[{macro.Name}] {where}: '{Path.GetFileName(step.ImagePath)}' 보임 → 스텝 {string.Join(",",changed)} {what}"
+                : $"[{macro.Name}] {where}: '{Path.GetFileName(step.ImagePath)}' 보임 (이미 {what} 상태)");
+            if(step.WaitAfter>0)Thread.Sleep(step.WaitAfter);
+        }
+
         void HandleTimeout(MacroItem macro,int stepIdx)
         {
             if(macro.OnTimeout==TimeoutAction.Restart){SetStatus($"[{macro.Name}] 스텝{stepIdx+1}: 시간 초과 → {macro.RestartDelay}ms 후 다시 실행...");if(macro.RestartDelay>0)Thread.Sleep(macro.RestartDelay);_restartRequested=true;}
@@ -1179,6 +1243,7 @@ namespace ImageMacro
             switch(action.Type){
                 case StepType.KeyInput:RunKey(action);break;
                 case StepType.MouseMove:RunMouseMove(action,macro);break;
+                case StepType.ToggleSteps:RunToggle(macro,action,bitmaps,-1);break;
                 case StepType.Delay:int rem=action.DelayEffectiveMs;while(rem>0&&_isRunning){int ch=Math.Min(rem,100);Thread.Sleep(ch);rem-=ch;}break;
                 case StepType.Notification:if(!string.IsNullOrEmpty(action.NotificationText))ShowNotification(macro.Name,action.NotificationText);break;
                 case StepType.Sequential:case StepType.Simultaneous:
@@ -1204,7 +1269,8 @@ namespace ImageMacro
             var steps=_current.Steps; int n=steps.Count;
             const int CW=250,CH=58,VGAP=32,COLGAP=86,LM=58,GPAD=7,GHEAD=20,LANE=16,BANDH=15;
             var cOut=Color.FromArgb(205,85,0);      // 실행 후 이동
-            var cWatch=Color.FromArgb(0,140,160);   // 분기 감시
+            var cWatch=Color.FromArgb(0,140,160);   // 끝난 뒤 지켜보기
+            var cTog=Color.FromArgb(130,40,170);    // 스텝 켜고 끄기
             var cSeq=Color.FromArgb(155,155,170);   // 순서대로
 
             // ── 1) 블록 만들기 (단일 카드 또는 묶음 그룹) ──────
@@ -1270,6 +1336,8 @@ namespace ImageMacro
                 int jt=steps[k].JumpOnSuccess-1;
                 if(steps[k].JumpOnSuccess>0&&jt>=0&&jt<n&&jt!=k)jm.Add((k,jt,1));
                 foreach(int w in ParseWatchTargets(steps[k].WatchTargets,n))if(w!=k)jm.Add((k,w,2));
+                if(steps[k].Type==StepType.ToggleSteps)
+                    foreach(int w in ParseWatchTargets(steps[k].ToggleTargets,n))if(w!=k)jm.Add((k,w,3));
             }
             // 한 카드의 같은 면(왼쪽/오른쪽)에 붙는 점들을 모아서
             // 나가는 것과 들어오는 것을 함께 세로로 흩어놓는다 (겹치면 번호표가 가려진다)
@@ -1350,10 +1418,10 @@ namespace ImageMacro
                 Text=$"실행 흐름 — {_current.Name}  (스텝 {n}개)",
                 StartPosition=FormStartPosition.CenterParent,
                 BackColor=Color.FromArgb(248,248,252),
-                MinimumSize=new System.Drawing.Size(520,400)
+                MinimumSize=new System.Drawing.Size(640,400)
             };
             frm.ClientSize=new System.Drawing.Size(
-                Math.Max(Math.Min(canvasW+24,wa.Width*9/10),520),
+                Math.Max(Math.Min(canvasW+24,wa.Width*9/10),640),
                 Math.Max(Math.Min(canvasH+30+24,wa.Height*9/10),420));
 
             var legend=new Panel{Dock=DockStyle.Top,Height=30,BackColor=Color.FromArgb(240,240,246)};
@@ -1365,11 +1433,13 @@ namespace ImageMacro
                 using(var pn=new Pen(cOut,2.2f))g.DrawLine(pn,150,15,166,15);
                 Dot(g,cOut,150,15); Head(g,cOut,172,15);
                 using(var pn=new Pen(cWatch,1.8f){DashStyle=System.Drawing.Drawing2D.DashStyle.Dash})g.DrawLine(pn,330,15,352,15);
+                using(var pn=new Pen(cTog,1.8f){DashStyle=System.Drawing.Drawing2D.DashStyle.Dot})g.DrawLine(pn,470,15,492,15);
             };
             void Leg(string t,int x,Color c){legend.Controls.Add(new Label{Text=t,Location=new System.Drawing.Point(x,8),AutoSize=true,Font=new Font("맑은 고딕",8),ForeColor=c,BackColor=Color.Transparent});}
             Leg("순서대로 실행",40,Color.FromArgb(110,110,125));
             Leg("● 나감 → 들어옴 ▶  (끝나면 이동)",182,Color.FromArgb(180,70,0));
             Leg("끝난 뒤 지켜보기",358,Color.FromArgb(0,125,145));
+            Leg("스텝 켜고 끄기",498,Color.FromArgb(120,35,155));
 
             var scroll=new Panel{Dock=DockStyle.Fill,AutoScroll=true,BackColor=Color.FromArgb(248,248,252)};
             var canvas=new Panel{Location=System.Drawing.Point.Empty,Size=new System.Drawing.Size(canvasW,canvasH),BackColor=Color.FromArgb(248,248,252)};
@@ -1417,9 +1487,10 @@ namespace ImageMacro
                 // 건너뛰는 흐름
                 for(int k=0;k<jm.Count;k++){
                     var(f,t,kind)=jm[k];
-                    Color c=kind==1?cOut:cWatch;
+                    Color c=kind==1?cOut:kind==2?cWatch:cTog;
                     using var pen=new Pen(c,kind==1?2.2f:1.8f);
                     if(kind==2)pen.DashStyle=System.Drawing.Drawing2D.DashStyle.Dash;
+                    if(kind==3)pen.DashStyle=System.Drawing.Drawing2D.DashStyle.Dot;
                     var pts=route[k];
                     for(int j=0;j+1<pts.Length;j++)g.DrawLine(pen,pts[j],pts[j+1]);
                     // 나가는 곳 ●, 들어오는 곳 ▶

@@ -18,7 +18,20 @@ namespace ImageMacro
         KeyInput,      // 키보드 입력 (텍스트 타이핑 / 단축키)
         MouseMove,     // 마우스 이동·클릭 (좌표 지정)
         Delay,         // 시간 대기
-        Notification   // 알림 띄우기
+        Notification,  // 알림 띄우기
+
+        // 스텝 켜고 끄기 — 지정한 이미지가 화면에 보이면 다른 스텝들을 켜거나 끈다.
+        // 기다리지 않고 그 자리에서 한 번만 확인하고 지나간다.
+        // 켜고 끈 상태는 매크로가 도는 동안 유지되고, 저장된 매크로는 건드리지 않는다.
+        ToggleSteps
+    }
+
+    // 스텝 켜고 끄기에서 무엇을 할지
+    public enum ToggleAction
+    {
+        Off,     // 끄기
+        On,      // 켜기
+        Flip     // 반대로 (켜져 있으면 끄고, 꺼져 있으면 켜기)
     }
 
     public enum TimeoutAction
@@ -85,6 +98,10 @@ namespace ImageMacro
         // 끝난 뒤 지켜볼 스텝 번호들 (쉼표 구분, 1부터. 예: "2,3,4")
         // 이 스텝이 끝나면 해당 스텝들의 이미지를 함께 지켜보다가 먼저 뜨는 쪽으로 이동한다.
         public string     WatchTargets   { get; set; } = "";
+
+        // 스텝 켜고 끄기 스텝용 — 대상 스텝 번호들 (쉼표 구분, 1부터. 예: "7,8,9")
+        public string       ToggleTargets { get; set; } = "";
+        public ToggleAction ToggleAction  { get; set; } = ToggleAction.Off;
 
         // 대기 스텝이 실제로 쉬는 시간(밀리초)
         [JsonIgnore]
@@ -159,6 +176,7 @@ namespace ImageMacro
             MoveY           = s.MoveY,          MoveRelative    = s.MoveRelative,
             MoveAction      = s.MoveAction,     JumpOnSuccess   = s.JumpOnSuccess,
             DelayMs         = s.DelayMs,        DelayUnit       = s.DelayUnit,
+            ToggleTargets   = s.ToggleTargets,  ToggleAction    = s.ToggleAction,
             NotificationText = s.NotificationText,
             WatchTargets    = s.WatchTargets
         };
