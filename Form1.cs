@@ -1070,7 +1070,13 @@ namespace ImageMacro
                         int gid=step.GroupId;
                         var grp=new List<(int idx,MacroStep st)>();
                         int j=i;
-                        while(j<macro.Steps.Count&&macro.Steps[j].Type==StepType.Simultaneous&&macro.Steps[j].GroupId==gid&&macro.Steps[j].Enabled){grp.Add((j,macro.Steps[j]));j++;}
+                        // 같은 묶음 번호가 이어지는 데까지가 한 묶음이다.
+                        // 꺼진 멤버는 후보에서만 빼고 묶음을 끊지 않는다.
+                        // (끊어버리면 뒤쪽 멤버가 통째로 빠져 묶음이 둘로 쪼개진다)
+                        while(j<macro.Steps.Count&&macro.Steps[j].Type==StepType.Simultaneous&&macro.Steps[j].GroupId==gid){
+                            if(macro.Steps[j].Enabled)grp.Add((j,macro.Steps[j]));
+                            j++;
+                        }
                         var(simOk,simMatched)=RunSim(macro,grp,bitmaps,loopDone); ok=simOk;
                         if(simMatched!=null)i=NextAfterStep(macro,simMatched,j,bitmaps,loopDone);else i=j;
                     }
