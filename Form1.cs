@@ -59,6 +59,25 @@ namespace ImageMacro
         ListBox  lstMacros=new();
         Button   btnNewMacro=new(),btnDelMacro=new(),btnSave=new(),btnLoad=new(),btnRun=new(),btnStop=new();
         Panel    pnlMid=new(); Panel pnlStepFlow=new();
+
+        // 스텝 카드. 선택 여부를 카드가 직접 들고 있어야
+        // 선택만 바뀔 때 목록을 다시 만들지 않고 그 카드만 다시 그릴 수 있다.
+        sealed class StepCard:Panel
+        {
+            public int Index=-1;
+            public bool Selected;
+        }
+
+        // ── 카드에 쓰는 글꼴 ───────────────────────────────────
+        // 카드를 만들 때마다 new Font 를 하면 GDI 자원이 계속 쌓여
+        // 결국 컨트롤이 만들어지지 않는다(= 스텝이 안 보인다).
+        // 한 벌만 만들어 두고 돌려쓴다. Control.Font 는 글꼴을 소유하지 않는다.
+        static readonly Font FCardTitle =new Font("맑은 고딕",8.5f,FontStyle.Bold);
+        static readonly Font FCardBody  =new Font("맑은 고딕",8);
+        static readonly Font FCardBadge =new Font("맑은 고딕",7.5f,FontStyle.Bold);
+        static readonly Font FCardSmall =new Font("맑은 고딕",7.5f);
+        static readonly Font FCardTiny  =new Font("맑은 고딕",7,FontStyle.Bold);
+        static readonly Font FCardArrow =new Font("맑은 고딕",9);
         Button   btnAddStep=new(),btnDelStep=new(),btnStepUp=new(),btnStepDn=new(),btnFlowView=new();
         TextBox  txtName=new(); NumericUpDown nudScanMs=new(),nudRepeat=new(),nudLoopDelay=new();
         ComboBox cmbLoopUnit=new();
@@ -362,20 +381,20 @@ namespace ImageMacro
             nudWaitAfter.Location=new System.Drawing.Point(ix,ry); nudWaitAfter.Size=new System.Drawing.Size(90,23); nudWaitAfter.Minimum=0; nudWaitAfter.Maximum=30000; nudWaitAfter.Value=500; nudWaitAfter.ValueChanged+=(s,e)=>{if(_selStep!=null)_selStep.WaitAfter=(int)nudWaitAfter.Value;}; pnlRightInner.Controls.Add(nudWaitAfter);
             chkEnabled.Text="이 스텝 사용"; chkEnabled.Location=new System.Drawing.Point(ix+112,ry+3); chkEnabled.AutoSize=true; chkEnabled.Checked=true; chkEnabled.CheckedChanged+=OnEnabled; pnlRightInner.Controls.Add(chkEnabled);
             chkStartOff.Text="시작할 때 꺼둠"; chkStartOff.Location=new System.Drawing.Point(ix+220,ry+3); chkStartOff.AutoSize=true; chkStartOff.Font=new Font("맑은 고딕",9);
-            chkStartOff.CheckedChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.StartDisabled=chkStartOff.Checked;RefreshStepList();}};
+            chkStartOff.CheckedChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.StartDisabled=chkStartOff.Checked;ScheduleStepListRefresh();}};
             pnlRightInner.Controls.Add(chkStartOff);
             ry+=32;
 
             pnlRightInner.Controls.Add(MkL("끝나면 갈 스텝:",rx,ry+4));
             nudJump.Location=new System.Drawing.Point(ix,ry); nudJump.Size=new System.Drawing.Size(60,23); nudJump.Minimum=0; nudJump.Maximum=999; nudJump.Value=0;
-            nudJump.ValueChanged+=(s,e)=>{if(_selStep!=null){_selStep.JumpOnSuccess=(int)nudJump.Value;RefreshStepList();}};
+            nudJump.ValueChanged+=(s,e)=>{if(_selStep!=null){_selStep.JumpOnSuccess=(int)nudJump.Value;ScheduleStepListRefresh();}};
             pnlRightInner.Controls.Add(nudJump);
             pnlRightInner.Controls.Add(new Label{Text="번으로 이동  (0 = 바로 아래 스텝)",Location=new System.Drawing.Point(ix+68,ry+4),AutoSize=true,ForeColor=Color.Gray,Font=new Font("맑은 고딕",8)});
             ry+=28;
 
             pnlRightInner.Controls.Add(MkL("끝난 뒤 지켜볼 스텝:",rx,ry+4));
             txtWatchTargets.Location=new System.Drawing.Point(ix,ry); txtWatchTargets.Size=new System.Drawing.Size(140,23); txtWatchTargets.Font=new Font("맑은 고딕",9); txtWatchTargets.PlaceholderText="예: 2,3,4";
-            txtWatchTargets.TextChanged+=(s,e)=>{if(_selStep!=null){_selStep.WatchTargets=txtWatchTargets.Text;RefreshStepList();}};
+            txtWatchTargets.TextChanged+=(s,e)=>{if(_selStep!=null){_selStep.WatchTargets=txtWatchTargets.Text;ScheduleStepListRefresh();}};
             pnlRightInner.Controls.Add(txtWatchTargets);
             pnlRightInner.Controls.Add(new Label{Text="먼저 뜨는 쪽으로 이동 (비우면 안 함)",Location=new System.Drawing.Point(ix+148,ry+4),AutoSize=true,ForeColor=Color.Gray,Font=new Font("맑은 고딕",8)});
             ry+=32;
@@ -387,19 +406,19 @@ namespace ImageMacro
                 // 그룹 ID 행
                 pnlGroupRow.Location=new System.Drawing.Point(0,y); pnlGroupRow.Size=new System.Drawing.Size(pw,30); pnlGroupRow.BackColor=Color.FromArgb(255,248,230); pnlGroupRow.BorderStyle=BorderStyle.FixedSingle; pnlImage.Controls.Add(pnlGroupRow);
                 pnlGroupRow.Controls.Add(new Label{Text="같이 볼 묶음 번호:",Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),Location=new System.Drawing.Point(6,7),AutoSize=true,ForeColor=Color.FromArgb(140,60,0)});
-                nudGroupId.Location=new System.Drawing.Point(PIX,5); nudGroupId.Size=new System.Drawing.Size(55,22); nudGroupId.Minimum=1; nudGroupId.Maximum=99; nudGroupId.Value=1; nudGroupId.ValueChanged+=(s,e)=>{if(_selStep!=null){_selStep.GroupId=(int)nudGroupId.Value;RefreshStepList();}}; pnlGroupRow.Controls.Add(nudGroupId);
+                nudGroupId.Location=new System.Drawing.Point(PIX,5); nudGroupId.Size=new System.Drawing.Size(55,22); nudGroupId.Minimum=1; nudGroupId.Maximum=99; nudGroupId.Value=1; nudGroupId.ValueChanged+=(s,e)=>{if(_selStep!=null){_selStep.GroupId=(int)nudGroupId.Value;ScheduleStepListRefresh();}}; pnlGroupRow.Controls.Add(nudGroupId);
                 pnlGroupRow.Controls.Add(new Label{Text="(같은 번호끼리 한꺼번에 감시)",ForeColor=Color.Gray,Font=new Font("맑은 고딕",8),Location=new System.Drawing.Point(PIX+64,8),AutoSize=true});
                 // 켜고 끄기 설정 줄 (묶음 번호 줄과 같은 자리 — 둘은 같이 안 보인다)
                 pnlToggleRow.Location=new System.Drawing.Point(0,y); pnlToggleRow.Size=new System.Drawing.Size(pw,30); pnlToggleRow.BackColor=Color.FromArgb(248,240,255); pnlToggleRow.BorderStyle=BorderStyle.FixedSingle; pnlImage.Controls.Add(pnlToggleRow);
                 pnlToggleRow.Controls.Add(new Label{Text="이 이미지가 보이면 스텝",Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),Location=new System.Drawing.Point(6,7),AutoSize=true,ForeColor=Color.FromArgb(110,30,150)});
                 txtToggleTargets.Location=new System.Drawing.Point(PIX,4); txtToggleTargets.Size=new System.Drawing.Size(90,23); txtToggleTargets.Font=new Font("맑은 고딕",9); txtToggleTargets.PlaceholderText="예: 7,8,9";
-                txtToggleTargets.TextChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.ToggleTargets=txtToggleTargets.Text;RefreshStepList();}};
+                txtToggleTargets.TextChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.ToggleTargets=txtToggleTargets.Text;ScheduleStepListRefresh();}};
                 pnlToggleRow.Controls.Add(txtToggleTargets);
                 pnlToggleRow.Controls.Add(new Label{Text="번을",Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),Location=new System.Drawing.Point(PIX+96,7),AutoSize=true,ForeColor=Color.FromArgb(110,30,150)});
                 cmbToggleAction.Location=new System.Drawing.Point(PIX+128,4); cmbToggleAction.Size=new System.Drawing.Size(160,23); cmbToggleAction.DropDownStyle=ComboBoxStyle.DropDownList; cmbToggleAction.Font=new Font("맑은 고딕",8.5f);
                 cmbToggleAction.Items.AddRange(new object[]{"끄기","켜기","반대로","만 켜기 (나머지 끄기)"});
                 cmbToggleAction.SelectedIndex=0;
-                cmbToggleAction.SelectedIndexChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.ToggleAction=(ToggleAction)cmbToggleAction.SelectedIndex;RefreshStepList();}};
+                cmbToggleAction.SelectedIndexChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.ToggleAction=(ToggleAction)cmbToggleAction.SelectedIndex;ScheduleStepListRefresh();}};
                 pnlToggleRow.Controls.Add(cmbToggleAction);
                 y+=38;
                 // 한 줄: [파일: ──경로──] [선택] [인식 테스트]
@@ -509,10 +528,10 @@ namespace ImageMacro
                 pnlDelay.Controls.Add(MkSL("── 대기 시간 ──────────────────────────────────────────────",0,y)); y+=18;
                 pnlDelay.Controls.Add(MkL("대기 시간:",0,y+4));
                 nudDelayMs.Location=new System.Drawing.Point(PIX,y); nudDelayMs.Size=new System.Drawing.Size(90,23); nudDelayMs.Minimum=1; nudDelayMs.Maximum=99999; nudDelayMs.Value=1000;
-                nudDelayMs.ValueChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.DelayMs=(int)nudDelayMs.Value;UpdateDelayHint();RefreshStepList();}}; pnlDelay.Controls.Add(nudDelayMs);
+                nudDelayMs.ValueChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.DelayMs=(int)nudDelayMs.Value;UpdateDelayHint();ScheduleStepListRefresh();}}; pnlDelay.Controls.Add(nudDelayMs);
                 cmbDelayUnit.Location=new System.Drawing.Point(PIX+96,y); cmbDelayUnit.Size=new System.Drawing.Size(85,23); cmbDelayUnit.DropDownStyle=ComboBoxStyle.DropDownList; cmbDelayUnit.Font=new Font("맑은 고딕",8.5f);
                 cmbDelayUnit.Items.AddRange(new object[]{"밀리초","초","분"}); cmbDelayUnit.SelectedIndex=0;
-                cmbDelayUnit.SelectedIndexChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.DelayUnit=cmbDelayUnit.SelectedIndex;UpdateDelayHint();RefreshStepList();}};
+                cmbDelayUnit.SelectedIndexChanged+=(s,e)=>{if(_suppressStepEvt)return;if(_selStep!=null){_selStep.DelayUnit=cmbDelayUnit.SelectedIndex;UpdateDelayHint();ScheduleStepListRefresh();}};
                 pnlDelay.Controls.Add(cmbDelayUnit);
                 lblDelayHint.Location=new System.Drawing.Point(PIX+190,y+4); lblDelayHint.AutoSize=true; lblDelayHint.ForeColor=Color.Gray; lblDelayHint.Font=new Font("맑은 고딕",8);
                 pnlDelay.Controls.Add(lblDelayHint);
@@ -568,28 +587,34 @@ namespace ImageMacro
         Panel MakeStepCard(int idx,MacroStep step,int cardW,bool selected)
         {
             int cardH=50;
-            var card=new Panel{Size=new System.Drawing.Size(cardW,cardH),BackColor=selected?Color.FromArgb(220,235,255):GetCardBg(step.Type),Cursor=Cursors.Hand,Tag=idx};
+            var card=new StepCard{Index=idx,Selected=selected,Size=new System.Drawing.Size(cardW,cardH),BackColor=selected?Color.FromArgb(220,235,255):GetCardBg(step.Type),Cursor=Cursors.Hand,Tag=idx};
             // 좌측 컬러 바
             card.Controls.Add(new Panel{Location=new System.Drawing.Point(0,0),Size=new System.Drawing.Size(4,cardH),BackColor=GetTypeColor(step.Type)});
             // 번호 + 타입 (한 줄)
             // 묶음 스텝도 번호를 함께 보여준다 (다른 스텝에서 이 번호로 이동을 지정할 수 있다)
             string num=step.Type==StepType.Simultaneous?$"{idx+1}. G{step.GroupId}":$"{idx+1}.";
-            card.Controls.Add(new Label{Text=$"{num} {GetTypeName(step.Type)}",Location=new System.Drawing.Point(9,4),AutoSize=true,Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),ForeColor=GetTypeColor(step.Type),BackColor=Color.Transparent});
+            card.Controls.Add(new Label{Text=$"{num} {GetTypeName(step.Type)}",Location=new System.Drawing.Point(9,4),AutoSize=true,Font=FCardTitle,ForeColor=GetTypeColor(step.Type),BackColor=Color.Transparent});
             // 내용
             string content=GetCardContent(step);
-            card.Controls.Add(new Label{Text=content,Location=new System.Drawing.Point(8,24),Size=new System.Drawing.Size(cardW-80,20),Font=new Font("맑은 고딕",8),ForeColor=step.Enabled?Color.FromArgb(60,60,60):Color.Silver,BackColor=Color.Transparent});
+            card.Controls.Add(new Label{Text=content,Location=new System.Drawing.Point(8,24),Size=new System.Drawing.Size(cardW-80,20),Font=FCardBody,ForeColor=step.Enabled?Color.FromArgb(60,60,60):Color.Silver,BackColor=Color.Transparent});
             // 인라인 JumpOnSuccess 뱃지
             if(step.JumpOnSuccess>0){
                 int jt=step.JumpOnSuccess;
-                var badge=new Label{Text=$"→ {jt}",AutoSize=false,Size=new System.Drawing.Size(38,18),TextAlign=ContentAlignment.MiddleCenter,Location=new System.Drawing.Point(cardW-72,16),Font=new Font("맑은 고딕",7.5f,FontStyle.Bold),ForeColor=Color.White,BackColor=Color.FromArgb(200,120,30),Cursor=Cursors.Hand};
+                var badge=new Label{Text=$"→ {jt}",AutoSize=false,Size=new System.Drawing.Size(38,18),TextAlign=ContentAlignment.MiddleCenter,Location=new System.Drawing.Point(cardW-72,16),Font=FCardBadge,ForeColor=Color.White,BackColor=Color.FromArgb(200,120,30),Cursor=Cursors.Hand};
                 badge.Click+=(s,e)=>SelectStep(jt-1);
                 card.Controls.Add(badge);
             }
             // 비활성 표시
-            if(!step.Enabled)card.Controls.Add(new Label{Text="OFF",Location=new System.Drawing.Point(cardW-32,4),AutoSize=true,Font=new Font("맑은 고딕",7,FontStyle.Bold),ForeColor=Color.FromArgb(180,180,180),BackColor=Color.Transparent});
-            else if(step.StartDisabled)card.Controls.Add(new Label{Text="꺼진 채 시작",Location=new System.Drawing.Point(cardW-66,4),AutoSize=true,Font=new Font("맑은 고딕",7,FontStyle.Bold),ForeColor=Color.FromArgb(150,60,190),BackColor=Color.Transparent});
+            if(!step.Enabled)card.Controls.Add(new Label{Text="OFF",Location=new System.Drawing.Point(cardW-32,4),AutoSize=true,Font=FCardTiny,ForeColor=Color.FromArgb(180,180,180),BackColor=Color.Transparent});
+            else if(step.StartDisabled)card.Controls.Add(new Label{Text="꺼진 채 시작",Location=new System.Drawing.Point(cardW-66,4),AutoSize=true,Font=FCardTiny,ForeColor=Color.FromArgb(150,60,190),BackColor=Color.Transparent});
             // 선택 테두리
-            if(selected)card.Paint+=(s,e)=>{using var pen=new Pen(Color.FromArgb(0,120,215),2);e.Graphics.DrawRectangle(pen,1,1,card.Width-3,card.Height-3);};
+            // 선택이 바뀔 때 카드를 다시 만들지 않고 다시 그리기만 하므로,
+            // 그릴 때마다 지금 선택된 카드인지 보고 테두리를 그린다.
+            card.Paint+=(s,e)=>{
+                if(!card.Selected)return;
+                using var pen=new Pen(Color.FromArgb(0,120,215),2);
+                e.Graphics.DrawRectangle(pen,1,1,card.Width-3,card.Height-3);
+            };
             // 클릭 → 선택
             EventHandler click=(s,e)=>SelectStep(idx);
             card.Click+=click; foreach(Control c in card.Controls)c.Click+=click;
@@ -603,7 +628,7 @@ namespace ImageMacro
             var targets=step.WatchTargets.Split(',',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
             string who=stepNo>0?$"스텝{stepNo} ":"";
             string txt=who+"끝난 뒤 지켜봄: "+string.Join(" | ",targets.Select(t=>"스텝 "+t.Trim()))+" → 먼저 뜨는 쪽으로";
-            var lbl=new Label{Text=txt,Location=new System.Drawing.Point(6,2),AutoSize=true,Font=new Font("맑은 고딕",7.5f),ForeColor=Color.FromArgb(0,100,160),BackColor=Color.Transparent,Cursor=Cursors.Hand};
+            var lbl=new Label{Text=txt,Location=new System.Drawing.Point(6,2),AutoSize=true,Font=FCardSmall,ForeColor=Color.FromArgb(0,100,160),BackColor=Color.Transparent,Cursor=Cursors.Hand};
             bar.Controls.Add(lbl);
             // 전체 바 클릭 시 첫 번째 대상으로 이동
             if(targets.Length>0&&int.TryParse(targets[0].Trim(),out int firstTarget)&&firstTarget>=1){
@@ -622,7 +647,7 @@ namespace ImageMacro
             var wrapper=new Panel{Size=new System.Drawing.Size(wrapW,wrapH),BackColor=Color.FromArgb(255,250,235)};
             wrapper.Paint+=(s,e)=>{using var pen=new Pen(Color.FromArgb(200,160,60),1){DashStyle=System.Drawing.Drawing2D.DashStyle.Dash};e.Graphics.DrawRectangle(pen,0,0,wrapper.Width-1,wrapper.Height-1);};
             int gid=steps[indices[0]].GroupId;
-            wrapper.Controls.Add(new Label{Text=$"묶음 {gid} (스텝 {indices[0]+1}~{indices[^1]+1}) — 먼저 뜨는 하나만",Location=new System.Drawing.Point(pad+2,2),AutoSize=true,Font=new Font("맑은 고딕",7.5f,FontStyle.Bold),ForeColor=Color.FromArgb(160,100,0),BackColor=Color.Transparent});
+            wrapper.Controls.Add(new Label{Text=$"묶음 {gid} (스텝 {indices[0]+1}~{indices[^1]+1}) — 먼저 뜨는 하나만",Location=new System.Drawing.Point(pad+2,2),AutoSize=true,Font=FCardBadge,ForeColor=Color.FromArgb(160,100,0),BackColor=Color.Transparent});
             int cy=headerH;
             foreach(int idx in indices){
                 var card=MakeStepCard(idx,steps[idx],innerW,sel==idx);
@@ -709,7 +734,33 @@ namespace ImageMacro
             LoadStepUI(step);
             _selStep=step;
             pnlRightScroll.Enabled=true;
-            RefreshStepList(idx);
+            // 목록 내용은 그대로고 '어느 카드가 선택됐는지'만 달라졌다.
+            // 전부 다시 만들면 컨트롤 수십 개를 부수고 새로 만드느라 화면이 멈춘다.
+            // 색만 바꾸고 보이는 곳으로 스크롤한다.
+            HighlightCard(idx);
+        }
+
+        // 선택 표시만 갱신한다. 카드 자체는 건드리지 않는다.
+        void HighlightCard(int idx)
+        {
+            if(_current==null)return;
+            void Walk(Control parent){
+                foreach(Control c in parent.Controls){
+                    if(c is StepCard card&&card.Index>=0&&card.Index<_current.Steps.Count){
+                        bool sel=card.Index==idx;
+                        var want=sel?Color.FromArgb(220,235,255):GetCardBg(_current.Steps[card.Index].Type);
+                        if(card.Selected!=sel||card.BackColor!=want){
+                            card.Selected=sel;
+                            card.BackColor=want;
+                            card.Invalidate();
+                        }
+                    }
+                    Walk(c);
+                }
+            }
+            Walk(pnlStepFlow);
+            var target=FindStepCard(idx);
+            if(target!=null){try{pnlStepFlow.ScrollControlIntoView(target);}catch{}}
         }
 
         // ══════════════════════════════════════════════════════
@@ -861,14 +912,14 @@ namespace ImageMacro
         void OnNudClicks(object? s,EventArgs e){if(_selStep!=null)_selStep.ClickCount=(int)nudClicks.Value;}
         void OnNudCDelay(object? s,EventArgs e){if(_selStep!=null)_selStep.ClickDelay=(int)nudCDelay.Value;}
         void OnConf(object? s,EventArgs e){lblConf.Text=$"{tbConf.Value}%";if(_selStep!=null)_selStep.Confidence=tbConf.Value;}
-        void OnEnabled(object? s,EventArgs e){if(_selStep!=null){_selStep.Enabled=chkEnabled.Checked;RefreshStepList();}}
+        void OnEnabled(object? s,EventArgs e){if(_selStep!=null){_selStep.Enabled=chkEnabled.Checked;ScheduleStepListRefresh();}}
         void OnNameChanged(object? s,EventArgs e){if(_current==null)return;_current.Name=txtName.Text;int idx=lstMacros.SelectedIndex;if(idx>=0&&idx<lstMacros.Items.Count)lstMacros.Items[idx]=txtName.Text;}
 
         // ══════════════════════════════════════════════════════
         //  매크로 목록
         // ══════════════════════════════════════════════════════
         void OnNewMacro(object? s,EventArgs e){var m=new MacroItem{Name=$"매크로 {_macros.Count+1}"};_macros.Add(m);RefreshMacroList();lstMacros.SelectedIndex=_macros.Count-1;}
-        void OnDelMacro(object? s,EventArgs e){if(_current==null)return;if(MessageBox.Show($"'{_current.Name}'을(를) 삭제하시겠습니까?","삭제 확인",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;_macros.Remove(_current);_current=null;RefreshMacroList();pnlStepFlow.Controls.Clear();_selectedCardIdx=-1;pnlRightScroll.Enabled=false;SetStatus("삭제 완료.");}
+        void OnDelMacro(object? s,EventArgs e){if(_current==null)return;if(MessageBox.Show($"'{_current.Name}'을(를) 삭제하시겠습니까?","삭제 확인",MessageBoxButtons.YesNo)!=DialogResult.Yes)return;_macros.Remove(_current);_current=null;RefreshMacroList();ClearStepCards();_selectedCardIdx=-1;pnlRightScroll.Enabled=false;SetStatus("삭제 완료.");}
         void OnMacroSelected(object? s,EventArgs e){if(lstMacros.SelectedIndex<0)return;_current=_macros[lstMacros.SelectedIndex];LoadMacroUI(_current);btnRun.Enabled=_current.Steps.Count>0;}
         void RefreshMacroList(){int sel=lstMacros.SelectedIndex;lstMacros.Items.Clear();foreach(var m in _macros)lstMacros.Items.Add(m.Name);if(sel>=0&&sel<lstMacros.Items.Count)lstMacros.SelectedIndex=sel;}
 
@@ -908,7 +959,7 @@ namespace ImageMacro
             _suppressStepEvt=true;
             // 스크롤 초기화 후 Clear → 팬텀 공백 방지
             pnlStepFlow.AutoScrollPosition=new System.Drawing.Point(0,0);
-            pnlStepFlow.SuspendLayout(); pnlStepFlow.Controls.Clear();
+            pnlStepFlow.SuspendLayout(); ClearStepCards();
             if(_current!=null&&_current.Steps.Count>0){
                 int cw=pnlStepFlow.ClientSize.Width; if(cw<100)cw=290;
                 int cardW=cw-10;
@@ -918,7 +969,7 @@ namespace ImageMacro
                     var step=_current.Steps[i];
                     // 순차 연결 화살표
                     if(i>0){
-                        var arrow=new Label{Text="↓",TextAlign=ContentAlignment.MiddleCenter,Location=new System.Drawing.Point(4+cardW/2-10,y),Size=new System.Drawing.Size(20,18),Font=new Font("맑은 고딕",9),ForeColor=Color.FromArgb(160,160,175)};
+                        var arrow=new Label{Text="↓",TextAlign=ContentAlignment.MiddleCenter,Location=new System.Drawing.Point(4+cardW/2-10,y),Size=new System.Drawing.Size(20,18),Font=FCardArrow,ForeColor=Color.FromArgb(160,160,175)};
                         pnlStepFlow.Controls.Add(arrow);y+=18;
                     }
                     // 동시 인식 그룹 감지
@@ -979,6 +1030,30 @@ namespace ImageMacro
                 }));
             }
             _suppressStepEvt=false;
+        }
+
+        // 값을 고칠 때마다 목록 전체를 다시 만들면, 글자 한 자 칠 때마다 화면이 멈춘다.
+        // 데이터는 곧바로 반영하고, 카드 글자만 잠깐 모았다가 한 번에 다시 그린다.
+        System.Windows.Forms.Timer? _redrawTimer=null;
+        void ScheduleStepListRefresh()
+        {
+            if(_redrawTimer==null){
+                _redrawTimer=new System.Windows.Forms.Timer{Interval=120};
+                _redrawTimer.Tick+=(s,e)=>{_redrawTimer!.Stop();RefreshStepList();};
+            }
+            _redrawTimer.Stop();
+            _redrawTimer.Start();
+        }
+
+        // 목록을 비운다. Controls.Clear() 만 하면 예전 카드가 창 자원을 쥔 채 남아,
+        // 다시 그릴수록 자원이 쌓이다가 결국 컨트롤이 안 만들어진다.
+        void ClearStepCards()
+        {
+            if(pnlStepFlow.Controls.Count==0)return;
+            var old=new Control[pnlStepFlow.Controls.Count];
+            pnlStepFlow.Controls.CopyTo(old,0);
+            pnlStepFlow.Controls.Clear();
+            foreach(var c in old)c.Dispose();
         }
 
         // 스텝 번호에 해당하는 카드 컨트롤 찾기 (묶음 그룹 안쪽까지 뒤진다)
@@ -1060,7 +1135,7 @@ namespace ImageMacro
         //  저장 / 불러오기
         // ══════════════════════════════════════════════════════
         void OnSave(object? s,EventArgs e){using var dlg=new SaveFileDialog{Title="저장",Filter="매크로 파일|*.macros.json",FileName="macros"};if(dlg.ShowDialog()!=DialogResult.OK)return;File.WriteAllText(dlg.FileName,JsonSerializer.Serialize(_macros,new JsonSerializerOptions{WriteIndented=true}));SetStatus($"저장: {Path.GetFileName(dlg.FileName)}");}
-        void OnLoadFile(object? s,EventArgs e){using var dlg=new OpenFileDialog{Title="파일 불러오기",Filter="매크로 파일|*.macros.json"};if(dlg.ShowDialog()!=DialogResult.OK)return;try{var loaded=JsonSerializer.Deserialize<List<MacroItem>>(File.ReadAllText(dlg.FileName));if(loaded==null)throw new Exception();_macros=loaded;_current=null;_selStep=null;RefreshMacroList();pnlStepFlow.Controls.Clear();_selectedCardIdx=-1;pnlRightScroll.Enabled=false;SetStatus($"불러오기: {loaded.Count}개");}catch(Exception ex){MessageBox.Show("불러오기 실패: "+ex.Message);}}
+        void OnLoadFile(object? s,EventArgs e){using var dlg=new OpenFileDialog{Title="파일 불러오기",Filter="매크로 파일|*.macros.json"};if(dlg.ShowDialog()!=DialogResult.OK)return;try{var loaded=JsonSerializer.Deserialize<List<MacroItem>>(File.ReadAllText(dlg.FileName));if(loaded==null)throw new Exception();_macros=loaded;_current=null;_selStep=null;RefreshMacroList();ClearStepCards();_selectedCardIdx=-1;pnlRightScroll.Enabled=false;SetStatus($"불러오기: {loaded.Count}개");}catch(Exception ex){MessageBox.Show("불러오기 실패: "+ex.Message);}}
 
         // ══════════════════════════════════════════════════════
         //  실행 / 정지
@@ -1741,9 +1816,9 @@ namespace ImageMacro
             var card=new Panel{Size=new System.Drawing.Size(w,h),BackColor=GetCardBg(step.Type),Cursor=Cursors.Hand};
             card.Controls.Add(new Panel{Location=new System.Drawing.Point(0,0),Size=new System.Drawing.Size(4,h),BackColor=GetTypeColor(step.Type)});
             string num=step.Type==StepType.Simultaneous?$"{idx+1}. G{step.GroupId}":$"{idx+1}.";
-            card.Controls.Add(new Label{Text=$"{num} {GetTypeName(step.Type)}",Location=new System.Drawing.Point(10,6),AutoSize=true,Font=new Font("맑은 고딕",8.5f,FontStyle.Bold),ForeColor=GetTypeColor(step.Type),BackColor=Color.Transparent});
-            card.Controls.Add(new Label{Text=GetCardContent(step),Location=new System.Drawing.Point(10,28),Size=new System.Drawing.Size(w-62,20),Font=new Font("맑은 고딕",8),ForeColor=step.Enabled?Color.FromArgb(60,60,60):Color.Silver,BackColor=Color.Transparent});
-            if(!step.Enabled)card.Controls.Add(new Label{Text="OFF",Location=new System.Drawing.Point(w-38,6),AutoSize=true,Font=new Font("맑은 고딕",7,FontStyle.Bold),ForeColor=Color.FromArgb(170,170,170),BackColor=Color.Transparent});
+            card.Controls.Add(new Label{Text=$"{num} {GetTypeName(step.Type)}",Location=new System.Drawing.Point(10,6),AutoSize=true,Font=FCardTitle,ForeColor=GetTypeColor(step.Type),BackColor=Color.Transparent});
+            card.Controls.Add(new Label{Text=GetCardContent(step),Location=new System.Drawing.Point(10,28),Size=new System.Drawing.Size(w-62,20),Font=FCardBody,ForeColor=step.Enabled?Color.FromArgb(60,60,60):Color.Silver,BackColor=Color.Transparent});
+            if(!step.Enabled)card.Controls.Add(new Label{Text="OFF",Location=new System.Drawing.Point(w-38,6),AutoSize=true,Font=FCardTiny,ForeColor=Color.FromArgb(170,170,170),BackColor=Color.Transparent});
             card.Paint+=(s,e)=>{using var pen=new Pen(GetTypeColor(step.Type));e.Graphics.DrawRectangle(pen,0,0,card.Width-1,card.Height-1);};
             EventHandler click=(s,e)=>{SelectStep(idx);};
             card.Click+=click;foreach(Control c in card.Controls)c.Click+=click;
@@ -2006,6 +2081,7 @@ namespace ImageMacro
         void ApplyHk(MacroItem m){UnregisterHotKey(Handle,HK_START);UnregisterHotKey(Handle,HK_STOP);RegisterHotKey(Handle,HK_START,m.StartMod,m.StartVk);RegisterHotKey(Handle,HK_STOP,m.StopMod,m.StopVk);}
         protected override void WndProc(ref Message m){if(m.Msg==WM_HOTKEY){if(m.WParam.ToInt32()==HK_START&&!_isRunning&&_current?.Steps.Count>0)OnRun(null,EventArgs.Empty);else if(m.WParam.ToInt32()==HK_STOP&&_isRunning)OnStopMacro(null,EventArgs.Empty);}base.WndProc(ref m);}
         protected override void OnFormClosed(FormClosedEventArgs e){
+            _redrawTimer?.Stop(); _redrawTimer?.Dispose();
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged-=OnDisplaySettingsChanged;
             UnregisterHotKey(Handle,HK_START);UnregisterHotKey(Handle,HK_STOP);base.OnFormClosed(e);}
 
