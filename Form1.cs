@@ -60,6 +60,16 @@ namespace ImageMacro
         Button   btnNewMacro=new(),btnDelMacro=new(),btnSave=new(),btnLoad=new(),btnRun=new(),btnStop=new();
         Panel    pnlMid=new(); Panel pnlStepFlow=new();
 
+        // 카드 오른쪽 위 딱지. 글자 폭을 재서 붙이므로
+        // 글자가 길어도 카드 밖으로 나가 잘리지 않는다.
+        static Label MakeBadge(string text,int cardW,Color fore)
+        {
+            int w=TextRenderer.MeasureText(text,FCardTiny).Width;
+            return new Label{Text=text,AutoSize=true,
+                Location=new System.Drawing.Point(Math.Max(4,cardW-w-6),4),
+                Font=FCardTiny,ForeColor=fore,BackColor=Color.Transparent};
+        }
+
         // 스텝 카드. 선택 여부를 카드가 직접 들고 있어야
         // 선택만 바뀔 때 목록을 다시 만들지 않고 그 카드만 다시 그릴 수 있다.
         sealed class StepCard:Panel
@@ -605,8 +615,8 @@ namespace ImageMacro
                 card.Controls.Add(badge);
             }
             // 비활성 표시
-            if(!step.Enabled)card.Controls.Add(new Label{Text="OFF",Location=new System.Drawing.Point(cardW-32,4),AutoSize=true,Font=FCardTiny,ForeColor=Color.FromArgb(180,180,180),BackColor=Color.Transparent});
-            else if(step.StartDisabled)card.Controls.Add(new Label{Text="꺼진 채 시작",Location=new System.Drawing.Point(cardW-66,4),AutoSize=true,Font=FCardTiny,ForeColor=Color.FromArgb(150,60,190),BackColor=Color.Transparent});
+            if(!step.Enabled)card.Controls.Add(MakeBadge("OFF",cardW,Color.FromArgb(180,180,180)));
+            else if(step.StartDisabled)card.Controls.Add(MakeBadge("꺼진 채 시작",cardW,Color.FromArgb(150,60,190)));
             // 선택 테두리
             // 선택이 바뀔 때 카드를 다시 만들지 않고 다시 그리기만 하므로,
             // 그릴 때마다 지금 선택된 카드인지 보고 테두리를 그린다.
@@ -960,8 +970,12 @@ namespace ImageMacro
             // 스크롤 초기화 후 Clear → 팬텀 공백 방지
             pnlStepFlow.AutoScrollPosition=new System.Drawing.Point(0,0);
             pnlStepFlow.SuspendLayout(); ClearStepCards();
+            int contentH=0;
             if(_current!=null&&_current.Steps.Count>0){
-                int cw=pnlStepFlow.ClientSize.Width; if(cw<100)cw=290;
+                // 테두리(양쪽 1px)를 뺀 폭은 스크롤바와 상관없이 일정하다.
+                // 여기에 스크롤바가 생길 몫만 빼서 카드 폭을 정한다.
+                int cw=pnlStepFlow.Width-2-(_assumeScrollbar?SystemInformation.VerticalScrollBarWidth:0);
+                if(cw<100)cw=290;
                 int cardW=cw-10;
                 int y=4;
                 int i=0;
@@ -1011,6 +1025,17 @@ namespace ImageMacro
                     }
                     i++;
                 }
+                contentH=y;
+            }
+            // 스크롤바가 생길지 아닐지 예상이 빗나갔으면, 폭을 고쳐 한 번만 다시 배치한다.
+            bool needScroll=contentH>pnlStepFlow.ClientSize.Height;
+            if(needScroll!=_assumeScrollbar&&!_relayingOut){
+                _assumeScrollbar=needScroll;
+                pnlStepFlow.ResumeLayout(false);
+                _suppressStepEvt=false;
+                _relayingOut=true;
+                try{RefreshStepList(forceSel);}finally{_relayingOut=false;}
+                return;
             }
             _selectedCardIdx=sel;
             pnlStepFlow.ResumeLayout(true);
@@ -1035,6 +1060,13 @@ namespace ImageMacro
         // 값을 고칠 때마다 목록 전체를 다시 만들면, 글자 한 자 칠 때마다 화면이 멈춘다.
         // 데이터는 곧바로 반영하고, 카드 글자만 잠깐 모았다가 한 번에 다시 그린다.
         System.Windows.Forms.Timer? _redrawTimer=null;
+
+        // 카드 폭을 잡을 때 세로 스크롤바가 있다고 보았는지, 그리고 다시 배치 중인지.
+        // ClientSize 는 지금 스크롤바가 있느냐에 따라 달라지는데,
+        // 목록을 비운 직후에는 스크롤바가 사라져 폭이 넓게 잡힌다.
+        // 그 넓은 폭으로 카드를 만들면 스크롤바가 다시 생기면서 오른쪽 글자가 가려진다.
+        bool _assumeScrollbar=false;
+        bool _relayingOut=false;
         void ScheduleStepListRefresh()
         {
             if(_redrawTimer==null){
