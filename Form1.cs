@@ -111,7 +111,7 @@ namespace ImageMacro
                 if(_settingHk)return;
                 if(_capturingStepHk){OnStepHkKeyDown(e);return;}
                 if(e.Control&&e.KeyCode==Keys.C&&_selStep!=null){_clipboard=MacroItem.CloneStep(_selStep);e.Handled=true;}
-                if(e.Control&&e.KeyCode==Keys.V&&_clipboard!=null&&_current!=null){int ins=_selectedCardIdx>=0?_selectedCardIdx+1:_current.Steps.Count;_current.Steps.Insert(ins,MacroItem.CloneStep(_clipboard));RefreshStepList(ins);e.Handled=true;}
+                if(e.Control&&e.KeyCode==Keys.V&&_clipboard!=null&&_current!=null){int ins=_selectedCardIdx>=0?_selectedCardIdx+1:_current.Steps.Count;InsertStepAt(ins,MacroItem.CloneStep(_clipboard));RefreshStepList(ins);SelectStep(ins);e.Handled=true;}
             };
         }
 
@@ -240,11 +240,99 @@ namespace ImageMacro
             chkAntiCapture.Anchor=AnchorStyles.Bottom|AnchorStyles.Left; pnlMid.Controls.Add(chkAntiCapture);
         }
 
+        // ══════════════════════════════════════════════════════
+        //  스텝 번호 다시 매기기
+        //  스텝을 끼우거나 빼거나 자리를 바꾸면 '끝나면 갈 스텝',
+        //  '끝난 뒤 지켜볼 스텝', '스텝 켜고 끄기 대상' 에 적어둔 번호가 어긋난다.
+        //  아래 도구들이 그 번호를 같이 옮겨준다.
+        //  (묶음 번호 G1·G2 는 스텝 위치가 아니라 이름표라서 옮기지 않는다)
+        // ══════════════════════════════════════════════════════
+
+        // map: 예전 위치(0부터) → 새 위치(0부터). -1 이면 사라진 스텝.
+        // 바뀐 설정이 몇 개인지 돌려준다.
+        static int RemapStepRefs(List<MacroStep> steps,Func<int,int> map)
+        {
+            int changed=0;
+            foreach(var st in steps){
+                if(st.JumpOnSuccess>0){
+                    int n=map(st.JumpOnSuccess-1);
+                    int v=n>=0?n+1:0;
+                    if(v!=st.JumpOnSuccess){st.JumpOnSuccess=v;changed++;}
+                }
+                string w=RemapNumberList(st.WatchTargets,map);
+                if(w!=st.WatchTargets){st.WatchTargets=w;changed++;}
+                string g=RemapNumberList(st.ToggleTargets,map);
+                if(g!=st.ToggleTargets){st.ToggleTargets=g;changed++;}
+            }
+            return changed;
+        }
+
+        // "3,5,7" 같은 목록의 번호를 새 번호로 바꾼다. 사라진 스텝은 목록에서 뺀다.
+        static string RemapNumberList(string csv,Func<int,int> map)
+        {
+            if(string.IsNullOrWhiteSpace(csv))return csv;
+            var outp=new List<string>();
+            foreach(var tok in csv.Split(',',StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries)){
+                if(!int.TryParse(tok,out int n)||n<1)continue;
+                int m=map(n-1);
+                if(m<0)continue;
+                string v=(m+1).ToString();
+                if(!outp.Contains(v))outp.Add(v);
+            }
+            return string.Join(",",outp);
+        }
+
+        void NoteRenumber(int changed,string what,string extra="")
+        {
+            if(changed>0)SetStatus($"스텝 {what} — 번호로 가리키던 설정 {changed}개를 자동으로 맞췄습니다.{extra}");
+            else if(extra.Length>0)SetStatus($"스텝 {what}{extra}");
+        }
+
+        // 묶음 한가운데에 다른 스텝을 끼우면 묶음이 둘로 갈라진다 — 알려만 준다
+        bool WouldSplitGroup(int ins,MacroStep ns)
+        {
+            var st=_current!.Steps;
+            if(ins<=0||ins>=st.Count)return false;
+            var a=st[ins-1]; var b=st[ins];
+            if(a.Type!=StepType.Simultaneous||b.Type!=StepType.Simultaneous||a.GroupId!=b.GroupId)return false;
+            return !(ns.Type==StepType.Simultaneous&&ns.GroupId==a.GroupId);
+        }
+
+        // 스텝을 ins 자리에 끼워넣는다 (번호 자동 조정 포함)
+        void InsertStepAt(int ins,MacroStep step)
+        {
+            if(_current==null)return;
+            string extra=WouldSplitGroup(ins,step)?"  ⚠ 묶음 한가운데라 묶음이 둘로 갈라집니다.":"";
+            int changed=RemapStepRefs(_current.Steps,i=>i<ins?i:i+1);
+            _current.Steps.Insert(ins,step);
+            NoteRenumber(changed,"추가",extra);
+        }
+
+        // 스텝을 뺀다. 사라지는 스텝을 가리키던 번호는 그 자리에 오는 다음 스텝을 가리키게 하고,
+        // 마지막 스텝이라 가리킬 곳이 없으면 '바로 아래 스텝'(0)으로 되돌린다.
+        void RemoveStepAt(int idx)
+        {
+            if(_current==null)return;
+            int last=_current.Steps.Count-1;
+            int changed=RemapStepRefs(_current.Steps,i=>i<idx?i:i==idx?(idx<last?idx:-1):i-1);
+            _current.Steps.RemoveAt(idx);
+            NoteRenumber(changed,"삭제");
+        }
+
+        // 두 스텝의 자리를 맞바꾼다
+        void SwapSteps(int a,int b)
+        {
+            if(_current==null)return;
+            int changed=RemapStepRefs(_current.Steps,i=>i==a?b:i==b?a:i);
+            (_current.Steps[a],_current.Steps[b])=(_current.Steps[b],_current.Steps[a]);
+            NoteRenumber(changed,"이동");
+        }
+
         void AddStepOfType(StepType type)
         {
             if(_current==null)return;
             int ins=_selectedCardIdx>=0?_selectedCardIdx+1:_current.Steps.Count;
-            _current.Steps.Insert(ins,new MacroStep{Type=type});
+            InsertStepAt(ins,new MacroStep{Type=type});
             RefreshStepList(ins);
             SelectStep(ins);      // 오른쪽 편집 패널까지 새 스텝으로 바꾼다
             btnRun.Enabled=true;
@@ -953,9 +1041,19 @@ namespace ImageMacro
             cmbStepType.SelectedIndexChanged+=OnStepTypeChanged;
         }
 
-        void OnDelStep(object? s,EventArgs e){if(_current==null||_selectedCardIdx<0||_selectedCardIdx>=_current.Steps.Count)return;int idx=_selectedCardIdx;_current.Steps.RemoveAt(idx);_selStep=null;int ns=Math.Min(idx,_current.Steps.Count-1);_selectedCardIdx=ns;RefreshStepList(ns);if(ns<0)pnlRightScroll.Enabled=false;btnRun.Enabled=_current.Steps.Count>0;}
-        void OnStepUp(object? s,EventArgs e){if(_current==null||_selectedCardIdx<=0)return;int i=_selectedCardIdx;var t=_current.Steps[i];_current.Steps[i]=_current.Steps[i-1];_current.Steps[i-1]=t;RefreshStepList(i-1);}
-        void OnStepDn(object? s,EventArgs e){if(_current==null||_selectedCardIdx<0||_selectedCardIdx>=_current.Steps.Count-1)return;int i=_selectedCardIdx;var t=_current.Steps[i];_current.Steps[i]=_current.Steps[i+1];_current.Steps[i+1]=t;RefreshStepList(i+1);}
+        void OnDelStep(object? s,EventArgs e){
+            if(_current==null||_selectedCardIdx<0||_selectedCardIdx>=_current.Steps.Count)return;
+            int idx=_selectedCardIdx;
+            RemoveStepAt(idx);
+            _selStep=null;
+            int ns=Math.Min(idx,_current.Steps.Count-1);
+            _selectedCardIdx=ns;
+            RefreshStepList(ns);
+            if(ns>=0)SelectStep(ns); else pnlRightScroll.Enabled=false;
+            btnRun.Enabled=_current.Steps.Count>0;
+        }
+        void OnStepUp(object? s,EventArgs e){if(_current==null||_selectedCardIdx<=0)return;int i=_selectedCardIdx;SwapSteps(i,i-1);RefreshStepList(i-1);SelectStep(i-1);}
+        void OnStepDn(object? s,EventArgs e){if(_current==null||_selectedCardIdx<0||_selectedCardIdx>=_current.Steps.Count-1)return;int i=_selectedCardIdx;SwapSteps(i,i+1);RefreshStepList(i+1);SelectStep(i+1);}
         void OnPickImage(object? s,EventArgs e){if(_selStep==null)return;using var dlg=new OpenFileDialog{Title="이미지 선택",Filter="이미지 파일|*.png;*.jpg;*.jpeg;*.bmp"};if(dlg.ShowDialog()!=DialogResult.OK)return;_selStep.ImagePath=dlg.FileName;_selStep.UseCustomOffset=false;_selStep.ClickOffsetX=0;_selStep.ClickOffsetY=0;lblImgPath.Text=Path.GetFileName(dlg.FileName);nudOffsetX.Value=0;nudOffsetY.Value=0;_previewClickPt=null;lblTestResult.Text="";try{picPreview.Image=System.Drawing.Image.FromFile(dlg.FileName);}catch{}UpdateClickPanel();picPreview.Invalidate();RefreshStepList();}
 
         // ══════════════════════════════════════════════════════
