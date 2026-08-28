@@ -25,3 +25,4 @@ templates/
 # 배포용 exe (깃에 넣지 않고 Releases 로 올린다 — 84MB)
 dist/
 publish/
+release-notes.md
